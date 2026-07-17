@@ -2,20 +2,20 @@
 # since it depends on service name and namespace that are out of this kustomize package.
 # It should be run by config/default
 resources:
-- bases/core.cognet.io_agents.yaml
-- bases/core.cognet.io_agentclasses.yaml
-- bases/core.cognet.io_tools.yaml
-- bases/core.cognet.io_toolsets.yaml
-- bases/core.cognet.io_skills.yaml
-- bases/core.cognet.io_mcpservers.yaml
-- bases/core.cognet.io_workflows.yaml
-- bases/core.cognet.io_models.yaml
-- bases/core.cognet.io_prompttemplates.yaml
-- bases/core.cognet.io_memories.yaml
-- bases/core.cognet.io_knowledgebases.yaml
-- bases/core.cognet.io_policies.yaml
-- bases/core.cognet.io_toolpolicies.yaml
-- bases/core.cognet.io_credentials.yaml
+- bases/core.hkmdxlftjf.io_agents.yaml
+- bases/core.hkmdxlftjf.io_agentclasses.yaml
+- bases/core.hkmdxlftjf.io_tools.yaml
+- bases/core.hkmdxlftjf.io_toolsets.yaml
+- bases/core.hkmdxlftjf.io_skills.yaml
+- bases/core.hkmdxlftjf.io_mcpservers.yaml
+- bases/core.hkmdxlftjf.io_workflows.yaml
+- bases/core.hkmdxlftjf.io_models.yaml
+- bases/core.hkmdxlftjf.io_prompttemplates.yaml
+- bases/core.hkmdxlftjf.io_memories.yaml
+- bases/core.hkmdxlftjf.io_knowledgebases.yaml
+- bases/core.hkmdxlftjf.io_policies.yaml
+- bases/core.hkmdxlftjf.io_toolpolicies.yaml
+- bases/core.hkmdxlftjf.io_credentials.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

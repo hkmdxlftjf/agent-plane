@@ -4,24 +4,29 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: policies.core.cognet.io
+  name: workflows.core.hkmdxlftjf.io
 spec:
-  group: core.cognet.io
+  group: core.hkmdxlftjf.io
   names:
-    kind: Policy
-    listKind: PolicyList
-    plural: policies
-    singular: policy
+    kind: Workflow
+    listKind: WorkflowList
+    plural: workflows
+    shortNames:
+    - wf
+    singular: workflow
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .spec.engine
+      name: Engine
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Policy is the Schema for the policies API.
+        description: Workflow is the Schema for the workflows API.
         properties:
           apiVersion:
             description: |-
@@ -41,82 +46,47 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of Policy
+            description: spec defines the desired state of Workflow
             properties:
-              mcp:
-                description: mcp restricts which MCPServers the agent may reach.
-                properties:
-                  allow:
-                    items:
+              engine:
+                description: |-
+                  engine names the target runtime engine this workflow is authored for
+                  (e.g. "langgraph", "openai-agents", "crewai"). Free-form by design so new
+                  engines need no platform change.
+                type: string
+              steps:
+                description: |-
+                  steps is an ordered list of workflow steps. The interpretation of `next`
+                  is engine-specific; CogNet does not execute the graph.
+                items:
+                  description: WorkflowStep is a single node in a workflow.
+                  properties:
+                    name:
+                      description: name uniquely identifies the step within the workflow.
+                      minLength: 1
                       type: string
-                    type: array
-                    x-kubernetes-list-type: set
-                  deny:
-                    items:
+                    next:
+                      description: next lists the names of steps that may follow this
+                        one.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    type:
+                      description: type categorizes the step (e.g. "planner", "tool",
+                        "reflect", "finish").
                       type: string
-                    type: array
-                    x-kubernetes-list-type: set
-                type: object
-              memory:
-                description: memory restricts which Memory backends the agent may
-                  use.
-                properties:
-                  allow:
-                    items:
-                      type: string
-                    type: array
-                    x-kubernetes-list-type: set
-                  deny:
-                    items:
-                      type: string
-                    type: array
-                    x-kubernetes-list-type: set
-                type: object
-              models:
-                description: models restricts which Models the agent may use.
-                properties:
-                  allow:
-                    items:
-                      type: string
-                    type: array
-                    x-kubernetes-list-type: set
-                  deny:
-                    items:
-                      type: string
-                    type: array
-                    x-kubernetes-list-type: set
-                type: object
-              tools:
-                description: tools restricts which Tools/tools the agent may invoke.
-                properties:
-                  allow:
-                    items:
-                      type: string
-                    type: array
-                    x-kubernetes-list-type: set
-                  deny:
-                    items:
-                      type: string
-                    type: array
-                    x-kubernetes-list-type: set
-                type: object
-              workflows:
-                description: workflows restricts which Workflows the agent may run.
-                properties:
-                  allow:
-                    items:
-                      type: string
-                    type: array
-                    x-kubernetes-list-type: set
-                  deny:
-                    items:
-                      type: string
-                    type: array
-                    x-kubernetes-list-type: set
-                type: object
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              version:
+                description: version is the semantic version of the workflow definition.
+                type: string
             type: object
           status:
-            description: status defines the observed state of Policy
+            description: status defines the observed state of Workflow
             properties:
               conditions:
                 items:

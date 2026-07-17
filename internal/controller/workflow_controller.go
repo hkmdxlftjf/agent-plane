@@ -36,9 +36,9 @@ type WorkflowReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=core.cognet.io,resources=workflows,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=core.cognet.io,resources=workflows/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core.cognet.io,resources=workflows/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=workflows,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=workflows/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=workflows/finalizers,verbs=update
 
 // Reconcile validates the Workflow graph and publishes readiness.
 func (r *WorkflowReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

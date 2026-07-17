@@ -3,7 +3,7 @@
 # and allow the plugins properly work.
 # More info: https://book.kubebuilder.io/reference/project-config.html
 cliVersion: 4.9.0
-domain: cognet.io
+domain: hkmdxlftjf.io
 layout:
 - go.kubebuilder.io/v4
 projectName: agent-plane
@@ -13,7 +13,7 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: cognet.io
+  domain: hkmdxlftjf.io
   group: core
   kind: Agent
   path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
@@ -25,7 +25,7 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: cognet.io
+  domain: hkmdxlftjf.io
   group: core
   kind: AgentClass
   path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
@@ -34,7 +34,7 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: cognet.io
+  domain: hkmdxlftjf.io
   group: core
   kind: Skill
   path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
@@ -46,7 +46,7 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: cognet.io
+  domain: hkmdxlftjf.io
   group: core
   kind: SkillSet
   path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
@@ -55,7 +55,7 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: cognet.io
+  domain: hkmdxlftjf.io
   group: core
   kind: MCPServer
   path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
@@ -64,7 +64,7 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: cognet.io
+  domain: hkmdxlftjf.io
   group: core
   kind: Workflow
   path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
@@ -76,7 +76,7 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: cognet.io
+  domain: hkmdxlftjf.io
   group: core
   kind: Model
   path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
@@ -85,7 +85,7 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: cognet.io
+  domain: hkmdxlftjf.io
   group: core
   kind: PromptTemplate
   path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
@@ -94,7 +94,7 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: cognet.io
+  domain: hkmdxlftjf.io
   group: core
   kind: Memory
   path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
@@ -103,7 +103,7 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: cognet.io
+  domain: hkmdxlftjf.io
   group: core
   kind: KnowledgeBase
   path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
@@ -112,7 +112,7 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: cognet.io
+  domain: hkmdxlftjf.io
   group: core
   kind: Policy
   path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
@@ -121,7 +121,7 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: cognet.io
+  domain: hkmdxlftjf.io
   group: core
   kind: ToolPolicy
   path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
@@ -130,7 +130,7 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: cognet.io
+  domain: hkmdxlftjf.io
   group: core
   kind: Credential
   path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1

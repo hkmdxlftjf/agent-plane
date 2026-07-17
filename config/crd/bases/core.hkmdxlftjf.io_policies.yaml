@@ -4,31 +4,24 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: skills.core.cognet.io
+  name: policies.core.hkmdxlftjf.io
 spec:
-  group: core.cognet.io
+  group: core.hkmdxlftjf.io
   names:
-    kind: Skill
-    listKind: SkillList
-    plural: skills
-    singular: skill
+    kind: Policy
+    listKind: PolicyList
+    plural: policies
+    singular: policy
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.version
-      name: Version
-      type: string
-    - jsonPath: .status.contentSource
-      name: Source
-      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Skill is the Schema for the skills API — a markdown instruction
-          pack.
+        description: Policy is the Schema for the policies API.
         properties:
           apiVersion:
             description: |-
@@ -48,53 +41,82 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of Skill
+            description: spec defines the desired state of Policy
             properties:
-              allowedTools:
-                description: |-
-                  allowedTools lists the names of Tools this skill is permitted to invoke.
-                  The runtime enforces it; CogNet records it.
-                items:
-                  type: string
-                type: array
-                x-kubernetes-list-type: set
-              content:
-                description: |-
-                  content is the inline markdown body of the skill (the SKILL.md). Exactly
-                  one of content or contentConfigMapRef must be set.
-                type: string
-              contentConfigMapRef:
-                description: |-
-                  contentConfigMapRef sources the markdown body from a ConfigMap key instead
-                  of inlining it — useful for large skills. Exactly one of content or
-                  contentConfigMapRef must be set.
+              mcp:
+                description: mcp restricts which MCPServers the agent may reach.
                 properties:
-                  key:
-                    description: key is the key within the ConfigMap's data to select.
-                    minLength: 1
-                    type: string
-                  name:
-                    description: name is the name of the ConfigMap in the same namespace.
-                    minLength: 1
-                    type: string
-                required:
-                - key
-                - name
+                  allow:
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  deny:
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
                 type: object
-              description:
-                description: |-
-                  description is the always-loaded one-line summary the model uses to decide
-                  whether this skill is relevant (progressive disclosure, level 1).
-                minLength: 1
-                type: string
-              version:
-                description: version is the semantic version of the skill content.
-                type: string
-            required:
-            - description
+              memory:
+                description: memory restricts which Memory backends the agent may
+                  use.
+                properties:
+                  allow:
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  deny:
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
+              models:
+                description: models restricts which Models the agent may use.
+                properties:
+                  allow:
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  deny:
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
+              tools:
+                description: tools restricts which Tools/tools the agent may invoke.
+                properties:
+                  allow:
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  deny:
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
+              workflows:
+                description: workflows restricts which Workflows the agent may run.
+                properties:
+                  allow:
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  deny:
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
             type: object
           status:
-            description: status defines the observed state of Skill
+            description: status defines the observed state of Policy
             properties:
               conditions:
                 items:
@@ -155,11 +177,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              contentSource:
-                description: |-
-                  contentSource reports where the resolved body came from: "inline" or
-                  "configMap".
-                type: string
               observedGeneration:
                 format: int64
                 type: integer

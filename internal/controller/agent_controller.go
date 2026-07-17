@@ -62,10 +62,10 @@ type resolvedRef struct {
 	ResourceVersion string `json:"resourceVersion"`
 }
 
-// +kubebuilder:rbac:groups=core.cognet.io,resources=agents,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=core.cognet.io,resources=agents/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core.cognet.io,resources=agents/finalizers,verbs=update
-// +kubebuilder:rbac:groups=core.cognet.io,resources=models;workflows;prompttemplates;tools;toolsets;skills;memories;policies;agentclasses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agents,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agents/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agents/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=models;workflows;prompttemplates;tools;toolsets;skills;memories;policies;agentclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 

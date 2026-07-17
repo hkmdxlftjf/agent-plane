@@ -83,7 +83,7 @@ kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f - >/d
 kubectl -n "$NS" create secret generic llm-secret --from-literal=api-key="$APIKEY" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 cat <<EOF | kubectl apply -f - >/dev/null
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Model
 metadata: {name: llm-model, namespace: $NS}
 spec:

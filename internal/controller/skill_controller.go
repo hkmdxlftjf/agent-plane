@@ -41,9 +41,9 @@ type SkillReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=core.cognet.io,resources=skills,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=core.cognet.io,resources=skills/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core.cognet.io,resources=skills/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=skills,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=skills/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=skills/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 // Reconcile validates the Skill and resolves its content source.

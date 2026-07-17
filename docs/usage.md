@@ -64,7 +64,7 @@ via SSE → runtime compares hash and hot-reloads when it differs.
 
 ## 2. Resource model (14 CRDs)
 
-API group `core.cognet.io/v1alpha1`, all Namespaced.
+API group `core.hkmdxlftjf.io/v1alpha1`, all Namespaced.
 
 | Kind | Short | Purpose |
 |---|---|---|
@@ -120,7 +120,7 @@ kubectl apply -f config/registry/registry.yaml   # Deployment+Service+SA (read-o
 An Agent = references. Minimal example:
 
 ```yaml
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Model
 metadata: {name: my-model}
 spec:
@@ -128,13 +128,13 @@ spec:
   modelName: openai/gpt-4o-mini
   credentialRef: {name: my-key}
 ---
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Credential
 metadata: {name: my-key}
 spec:
   secretRef: {name: my-secret, key: api-key}   # points at a plain K8s Secret
 ---
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Agent
 metadata: {name: my-agent}
 spec:
@@ -241,7 +241,7 @@ materializes an owned Deployment (+ optional Service), just like it materializes
 an MCPServer.
 
 ```yaml
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Agent
 metadata: {name: support-agent}
 spec:

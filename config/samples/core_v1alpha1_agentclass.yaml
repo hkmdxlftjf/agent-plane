@@ -1,4 +1,4 @@
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: AgentClass
 metadata:
   name: support-class

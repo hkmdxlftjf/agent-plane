@@ -40,9 +40,9 @@ type CredentialReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=core.cognet.io,resources=credentials,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=core.cognet.io,resources=credentials/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core.cognet.io,resources=credentials/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=credentials,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=credentials/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=credentials/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 // Reconcile checks the backing Secret/key and publishes readiness. It never

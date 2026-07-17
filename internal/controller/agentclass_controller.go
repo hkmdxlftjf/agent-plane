@@ -36,10 +36,10 @@ type AgentClassReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=core.cognet.io,resources=agentclasses,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=core.cognet.io,resources=agentclasses/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core.cognet.io,resources=agentclasses/finalizers,verbs=update
-// +kubebuilder:rbac:groups=core.cognet.io,resources=models;workflows;prompttemplates;policies,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agentclasses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agentclasses/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agentclasses/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=models;workflows;prompttemplates;policies,verbs=get;list;watch
 
 // Reconcile validates the AgentClass defaults and publishes readiness.
 func (r *AgentClassReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

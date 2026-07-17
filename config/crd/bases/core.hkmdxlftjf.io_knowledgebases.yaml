@@ -4,29 +4,29 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: toolsets.core.cognet.io
+  name: knowledgebases.core.hkmdxlftjf.io
 spec:
-  group: core.cognet.io
+  group: core.hkmdxlftjf.io
   names:
-    kind: ToolSet
-    listKind: ToolSetList
-    plural: toolsets
+    kind: KnowledgeBase
+    listKind: KnowledgeBaseList
+    plural: knowledgebases
     shortNames:
-    - ss
-    singular: toolset
+    - kb
+    singular: knowledgebase
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .status.resolvedTools
-      name: Tools
-      type: integer
+    - jsonPath: .spec.source
+      name: Source
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: ToolSet is the Schema for the toolsets API.
+        description: KnowledgeBase is the Schema for the knowledgebases API.
         properties:
           apiVersion:
             description: |-
@@ -46,33 +46,58 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of ToolSet
+            description: spec defines the desired state of KnowledgeBase
             properties:
-              description:
-                description: description documents the purpose of this tool bundle.
+              credentialRef:
+                description: credentialRef references credentials for accessing the
+                  source.
+                properties:
+                  name:
+                    description: name is the metadata.name of the referenced resource.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              embeddingModelRef:
+                description: embeddingModelRef references the Model used to embed
+                  documents/queries.
+                properties:
+                  name:
+                    description: name is the metadata.name of the referenced resource.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              memoryRef:
+                description: memoryRef references the Memory (e.g. a vector backend)
+                  storing the index.
+                properties:
+                  name:
+                    description: name is the metadata.name of the referenced resource.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              source:
+                description: source is the type of backing store for the corpus.
+                enum:
+                - s3
+                - http
+                - git
+                - vector
                 type: string
-              toolRefs:
-                description: toolRefs lists the Tools included in this set.
-                items:
-                  description: |-
-                    LocalReference points at another CogNet resource by name, in the same
-                    namespace as the referring object. This is the primary composition primitive:
-                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
-                  properties:
-                    name:
-                      description: name is the metadata.name of the referenced resource.
-                      minLength: 1
-                      type: string
-                  required:
-                  - name
-                  type: object
-                type: array
-                x-kubernetes-list-type: atomic
+              uri:
+                description: uri locates the corpus (bucket, endpoint, or repository
+                  URL).
+                type: string
             required:
-            - toolRefs
+            - source
             type: object
           status:
-            description: status defines the observed state of ToolSet
+            description: status defines the observed state of KnowledgeBase
             properties:
               conditions:
                 items:
@@ -135,10 +160,6 @@ spec:
                 x-kubernetes-list-type: map
               observedGeneration:
                 format: int64
-                type: integer
-              resolvedTools:
-                description: resolvedTools is the count of member Tools that currently
-                  exist.
                 type: integer
             type: object
         required:

@@ -45,7 +45,7 @@ Resources.
   reused by the controllers — cross-object *existence* is deliberately left to
   the controllers' eventual consistency so GitOps can apply in any order.
 
-## Resource model (`core.cognet.io/v1alpha1`)
+## Resource model (`core.hkmdxlftjf.io/v1alpha1`)
 
 | Kind | Purpose |
 |------|---------|

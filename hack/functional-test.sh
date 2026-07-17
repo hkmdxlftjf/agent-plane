@@ -29,7 +29,7 @@ kubectl create ns $NS >/dev/null
 ########################################################################
 echo; echo "### Scenario A: Agent reference resolution + auto-convergence via watch"
 cat <<'EOF' | $K apply -f - >/dev/null
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Agent
 metadata: {name: a1}
 spec:
@@ -40,7 +40,7 @@ expect_eventually "A1 Agent with missing Model -> Degraded" \
 
 # Create the missing Model; the Agent watches Models, so it should auto-reconcile.
 cat <<'EOF' | $K apply -f - >/dev/null
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Model
 metadata: {name: m1}
 spec: {provider: anthropic, modelName: claude-opus-4-8}
@@ -53,7 +53,7 @@ expect_eventually "A3 Agent publishes a resolvedConfigHash" \
 ########################################################################
 echo; echo "### Scenario B: Credential verifies backing Secret (watches Secrets)"
 cat <<'EOF' | $K apply -f - >/dev/null
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Credential
 metadata: {name: c1}
 spec:
@@ -69,7 +69,7 @@ expect_eventually "B2 Credential auto-converges to SecretFound=true after Secret
 ########################################################################
 echo; echo "### Scenario C: Workflow structural validation (controller-side)"
 cat <<'EOF' | $K apply -f - >/dev/null
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Workflow
 metadata: {name: wf-bad}
 spec:
@@ -82,7 +82,7 @@ expect_eventually "C2 reason is InvalidSpec" \
   "$K get workflow wf-bad -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].reason}'" "InvalidSpec"
 
 cat <<'EOF' | $K apply -f - >/dev/null
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Workflow
 metadata: {name: wf-ok}
 spec:
@@ -96,7 +96,7 @@ expect_eventually "C3 valid Workflow -> Ready=True" \
 ########################################################################
 echo; echo "### Scenario D: MCPServer materializes + owns Deployment/Service, GC on delete"
 cat <<'EOF' | $K apply -f - >/dev/null
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: MCPServer
 metadata: {name: mcp1}
 spec: {image: nginx:alpine, port: 8080, replicas: 1}
@@ -118,7 +118,7 @@ expect_eventually "D5 Deployment garbage-collected after MCPServer deleted" \
 ########################################################################
 echo; echo "### Scenario E: ToolPolicy conflict detection"
 cat <<'EOF' | $K apply -f - >/dev/null
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: ToolPolicy
 metadata: {name: tp-bad}
 spec:
@@ -132,7 +132,7 @@ expect_eventually "E1 ToolPolicy with conflicting actions -> Ready=False" \
 ########################################################################
 echo; echo "### Scenario F: Tool (executable capability) structural validation"
 cat <<'EOF' | $K apply -f - >/dev/null
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Tool
 metadata: {name: tool-bad}
 spec: {type: mcp}
@@ -144,7 +144,7 @@ expect_eventually "F1 mcp Tool without mcpServerRef -> Ready=False (InvalidSpec)
 echo; echo "### Scenario G: Skill (markdown instruction pack) content source"
 # inline content -> Ready, source=inline
 cat <<'EOF' | $K apply -f - >/dev/null
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Skill
 metadata: {name: sk-inline}
 spec:
@@ -158,7 +158,7 @@ expect_eventually "G1b inline Skill Ready=True" \
 
 # configMap-sourced -> Degraded until the ConfigMap exists, then Ready (watch)
 cat <<'EOF' | $K apply -f - >/dev/null
-apiVersion: core.cognet.io/v1alpha1
+apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Skill
 metadata: {name: sk-cm}
 spec:

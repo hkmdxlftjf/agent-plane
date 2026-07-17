@@ -4,21 +4,21 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: credentials.core.cognet.io
+  name: prompttemplates.core.hkmdxlftjf.io
 spec:
-  group: core.cognet.io
+  group: core.hkmdxlftjf.io
   names:
-    kind: Credential
-    listKind: CredentialList
-    plural: credentials
+    kind: PromptTemplate
+    listKind: PromptTemplateList
+    plural: prompttemplates
     shortNames:
-    - cred
-    singular: credential
+    - pt
+    singular: prompttemplate
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.secretRef.name
-      name: Secret
+    - jsonPath: .spec.version
+      name: Version
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -26,7 +26,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Credential is the Schema for the credentials API.
+        description: PromptTemplate is the Schema for the prompttemplates API.
         properties:
           apiVersion:
             description: |-
@@ -46,32 +46,52 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of Credential
+            description: spec defines the desired state of PromptTemplate
             properties:
-              description:
-                description: description documents what this credential is for.
+              fewShot:
+                description: fewShot is an ordered list of few-shot examples.
+                items:
+                  description: FewShotExample is a single input/output demonstration.
+                  properties:
+                    input:
+                      type: string
+                    output:
+                      type: string
+                  required:
+                  - input
+                  - output
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              roles:
+                description: roles carries additional role-scoped prompts keyed by
+                  role name.
+                items:
+                  description: RolePrompt is a prompt scoped to a specific role.
+                  properties:
+                    content:
+                      type: string
+                    role:
+                      minLength: 1
+                      type: string
+                  required:
+                  - content
+                  - role
+                  type: object
+                type: array
+              system:
+                description: system is the system prompt text.
                 type: string
-              secretRef:
-                description: secretRef points at the Secret key holding the credential
-                  value.
-                properties:
-                  key:
-                    description: key is the key within the Secret's data to select.
-                    minLength: 1
-                    type: string
-                  name:
-                    description: name is the name of the Secret in the same namespace.
-                    minLength: 1
-                    type: string
-                required:
-                - key
-                - name
-                type: object
-            required:
-            - secretRef
+              template:
+                description: template is the primary prompt template body (engine-specific
+                  templating).
+                type: string
+              version:
+                description: version is the semantic version of this prompt.
+                type: string
             type: object
           status:
-            description: status defines the observed state of Credential
+            description: status defines the observed state of PromptTemplate
             properties:
               conditions:
                 items:
@@ -135,10 +155,6 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
-              secretFound:
-                description: secretFound reflects whether the referenced Secret/key
-                  was located.
-                type: boolean
             type: object
         required:
         - spec

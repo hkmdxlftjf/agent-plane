@@ -4,22 +4,22 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: models.core.cognet.io
+  name: tools.core.hkmdxlftjf.io
 spec:
-  group: core.cognet.io
+  group: core.hkmdxlftjf.io
   names:
-    kind: Model
-    listKind: ModelList
-    plural: models
-    singular: model
+    kind: Tool
+    listKind: ToolList
+    plural: tools
+    singular: tool
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.provider
-      name: Provider
+    - jsonPath: .spec.type
+      name: Type
       type: string
-    - jsonPath: .spec.modelName
-      name: Model
+    - jsonPath: .spec.version
+      name: Version
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -27,7 +27,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Model is the Schema for the models API.
+        description: Tool is the Schema for the tools API.
         properties:
           apiVersion:
             description: |-
@@ -47,11 +47,25 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of Model
+            description: spec defines the desired state of Tool
             properties:
-              credentialRef:
-                description: credentialRef references a Credential supplying the API
-                  key/token.
+              description:
+                description: |-
+                  description explains what the tool does, so a model can decide when to
+                  call it. Surfaced to runtimes as the tool-call description.
+                type: string
+              endpoint:
+                description: |-
+                  endpoint is the address the runtime uses to reach the tool. Its meaning
+                  depends on type (URL for http/grpc, image ref for container, etc.).
+                type: string
+              inputSchema:
+                description: inputSchema is a JSON Schema for the tool's input arguments.
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              mcpServerRef:
+                description: mcpServerRef, for type=mcp, references the MCPServer
+                  exposing this tool.
                 properties:
                   name:
                     description: name is the metadata.name of the referenced resource.
@@ -60,44 +74,38 @@ spec:
                 required:
                 - name
                 type: object
-              defaults:
-                description: defaults carries provider-agnostic sampling defaults
-                  surfaced to runtimes.
-                properties:
-                  maxTokens:
-                    format: int32
-                    type: integer
-                  temperature:
-                    type: string
+              mcpToolName:
+                description: |-
+                  mcpToolName, for type=mcp, is the tool name to invoke on the MCP server
+                  when it differs from this resource's metadata.name.
+                type: string
+              outputSchema:
+                description: outputSchema is a JSON Schema for the tool's result.
                 type: object
-              endpoint:
-                description: |-
-                  endpoint is the base URL for the provider API. Optional for providers
-                  with a well-known default endpoint (e.g. hosted OpenAI/Anthropic).
-                type: string
-              modelName:
-                description: |-
-                  modelName is the provider-specific model identifier (e.g. "gpt-4o",
-                  "claude-opus-4-8", "llama3.1:70b").
-                minLength: 1
-                type: string
-              provider:
-                description: provider identifies the model backend family.
+                x-kubernetes-preserve-unknown-fields: true
+              timeoutSeconds:
+                description: timeoutSeconds bounds a single tool invocation.
+                format: int32
+                minimum: 1
+                type: integer
+              type:
+                description: type is the invocation mechanism for this tool.
                 enum:
-                - openai
-                - anthropic
-                - azure-openai
-                - ollama
-                - vllm
-                - openrouter
-                - custom
+                - http
+                - grpc
+                - mcp
+                - wasm
+                - plugin
+                - container
+                type: string
+              version:
+                description: version is the semantic version of the tool contract.
                 type: string
             required:
-            - modelName
-            - provider
+            - type
             type: object
           status:
-            description: status defines the observed state of Model
+            description: status defines the observed state of Tool
             properties:
               conditions:
                 items:
@@ -158,6 +166,10 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              healthy:
+                description: healthy reflects the last observed health probe result,
+                  if any.
+                type: boolean
               observedGeneration:
                 format: int64
                 type: integer

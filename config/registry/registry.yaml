@@ -11,7 +11,7 @@ kind: ClusterRole
 metadata:
   name: cognet-registry
 rules:
-- apiGroups: ["core.cognet.io"]
+- apiGroups: ["core.hkmdxlftjf.io"]
   resources:
   - agents
   - models

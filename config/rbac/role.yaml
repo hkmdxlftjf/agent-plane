@@ -38,7 +38,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - core.cognet.io
+  - core.hkmdxlftjf.io
   resources:
   - agentclasses
   - agents
@@ -63,7 +63,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - core.cognet.io
+  - core.hkmdxlftjf.io
   resources:
   - agentclasses/finalizers
   - agents/finalizers
@@ -82,7 +82,7 @@ rules:
   verbs:
   - update
 - apiGroups:
-  - core.cognet.io
+  - core.hkmdxlftjf.io
   resources:
   - agentclasses/status
   - agents/status

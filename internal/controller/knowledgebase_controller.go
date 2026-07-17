@@ -34,10 +34,10 @@ type KnowledgeBaseReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=core.cognet.io,resources=knowledgebases,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=core.cognet.io,resources=knowledgebases/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core.cognet.io,resources=knowledgebases/finalizers,verbs=update
-// +kubebuilder:rbac:groups=core.cognet.io,resources=models;memories;credentials,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=knowledgebases,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=knowledgebases/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=knowledgebases/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=models;memories;credentials,verbs=get;list;watch
 
 // Reconcile validates the KnowledgeBase's references and publishes readiness.
 func (r *KnowledgeBaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

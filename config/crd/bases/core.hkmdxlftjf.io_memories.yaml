@@ -4,21 +4,19 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: prompttemplates.core.cognet.io
+  name: memories.core.hkmdxlftjf.io
 spec:
-  group: core.cognet.io
+  group: core.hkmdxlftjf.io
   names:
-    kind: PromptTemplate
-    listKind: PromptTemplateList
-    plural: prompttemplates
-    shortNames:
-    - pt
-    singular: prompttemplate
+    kind: Memory
+    listKind: MemoryList
+    plural: memories
+    singular: memory
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.version
-      name: Version
+    - jsonPath: .spec.backend
+      name: Backend
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -26,7 +24,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: PromptTemplate is the Schema for the prompttemplates API.
+        description: Memory is the Schema for the memories API.
         properties:
           apiVersion:
             description: |-
@@ -46,52 +44,39 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of PromptTemplate
+            description: spec defines the desired state of Memory
             properties:
-              fewShot:
-                description: fewShot is an ordered list of few-shot examples.
-                items:
-                  description: FewShotExample is a single input/output demonstration.
-                  properties:
-                    input:
-                      type: string
-                    output:
-                      type: string
-                  required:
-                  - input
-                  - output
-                  type: object
-                type: array
-                x-kubernetes-list-type: atomic
-              roles:
-                description: roles carries additional role-scoped prompts keyed by
-                  role name.
-                items:
-                  description: RolePrompt is a prompt scoped to a specific role.
-                  properties:
-                    content:
-                      type: string
-                    role:
-                      minLength: 1
-                      type: string
-                  required:
-                  - content
-                  - role
-                  type: object
-                type: array
-              system:
-                description: system is the system prompt text.
+              backend:
+                description: backend identifies the storage technology.
+                enum:
+                - redis
+                - postgres
+                - vector
+                - graph
+                - s3
                 type: string
-              template:
-                description: template is the primary prompt template body (engine-specific
-                  templating).
+              connectionRef:
+                description: |-
+                  connectionRef references a Credential holding connection details
+                  (DSN, URL, access keys) for the backend.
+                properties:
+                  name:
+                    description: name is the metadata.name of the referenced resource.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              namespace:
+                description: |-
+                  namespace optionally scopes/prefixes entries within the backend (e.g. a
+                  Redis key prefix or a vector collection name).
                 type: string
-              version:
-                description: version is the semantic version of this prompt.
-                type: string
+            required:
+            - backend
             type: object
           status:
-            description: status defines the observed state of PromptTemplate
+            description: status defines the observed state of Memory
             properties:
               conditions:
                 items:

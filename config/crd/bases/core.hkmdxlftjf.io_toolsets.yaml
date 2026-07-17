@@ -4,29 +4,29 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: toolpolicies.core.cognet.io
+  name: toolsets.core.hkmdxlftjf.io
 spec:
-  group: core.cognet.io
+  group: core.hkmdxlftjf.io
   names:
-    kind: ToolPolicy
-    listKind: ToolPolicyList
-    plural: toolpolicies
+    kind: ToolSet
+    listKind: ToolSetList
+    plural: toolsets
     shortNames:
-    - tp
-    singular: toolpolicy
+    - ss
+    singular: toolset
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.defaultAction
-      name: Default
-      type: string
+    - jsonPath: .status.resolvedTools
+      name: Tools
+      type: integer
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: ToolPolicy is the Schema for the toolpolicies API.
+        description: ToolSet is the Schema for the toolsets API.
         properties:
           apiVersion:
             description: |-
@@ -46,48 +46,33 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of ToolPolicy
+            description: spec defines the desired state of ToolSet
             properties:
-              defaultAction:
-                default: allow
-                description: defaultAction applies when no rule matches.
-                enum:
-                - allow
-                - deny
+              description:
+                description: description documents the purpose of this tool bundle.
                 type: string
-              rules:
-                description: |-
-                  rules is an ordered list of per-tool rules. The first matching rule for a
-                  given tool name applies.
+              toolRefs:
+                description: toolRefs lists the Tools included in this set.
                 items:
-                  description: ToolRule matches one or more Tools and decides how
-                    they may be used.
+                  description: |-
+                    LocalReference points at another CogNet resource by name, in the same
+                    namespace as the referring object. This is the primary composition primitive:
+                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
                   properties:
-                    action:
-                      description: action is allow or deny for the matched tool(s).
-                      enum:
-                      - allow
-                      - deny
-                      type: string
-                    maxCallsPerSession:
-                      description: maxCallsPerSession optionally caps invocations
-                        per agent session.
-                      format: int32
-                      minimum: 0
-                      type: integer
-                    tool:
-                      description: tool matches a Tool by name. "*" matches any tool.
+                    name:
+                      description: name is the metadata.name of the referenced resource.
                       minLength: 1
                       type: string
                   required:
-                  - action
-                  - tool
+                  - name
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
+            required:
+            - toolRefs
             type: object
           status:
-            description: status defines the observed state of ToolPolicy
+            description: status defines the observed state of ToolSet
             properties:
               conditions:
                 items:
@@ -150,6 +135,10 @@ spec:
                 x-kubernetes-list-type: map
               observedGeneration:
                 format: int64
+                type: integer
+              resolvedTools:
+                description: resolvedTools is the count of member Tools that currently
+                  exist.
                 type: integer
             type: object
         required:

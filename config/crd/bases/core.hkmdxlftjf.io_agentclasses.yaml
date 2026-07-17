@@ -4,29 +4,26 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: workflows.core.cognet.io
+  name: agentclasses.core.hkmdxlftjf.io
 spec:
-  group: core.cognet.io
+  group: core.hkmdxlftjf.io
   names:
-    kind: Workflow
-    listKind: WorkflowList
-    plural: workflows
+    kind: AgentClass
+    listKind: AgentClassList
+    plural: agentclasses
     shortNames:
-    - wf
-    singular: workflow
+    - agc
+    singular: agentclass
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.engine
-      name: Engine
-      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Workflow is the Schema for the workflows API.
+        description: AgentClass is the Schema for the agentclasses API.
         properties:
           apiVersion:
             description: |-
@@ -46,47 +43,63 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of Workflow
+            description: spec defines the desired state of AgentClass
             properties:
-              engine:
-                description: |-
-                  engine names the target runtime engine this workflow is authored for
-                  (e.g. "langgraph", "openai-agents", "crewai"). Free-form by design so new
-                  engines need no platform change.
-                type: string
-              steps:
-                description: |-
-                  steps is an ordered list of workflow steps. The interpretation of `next`
-                  is engine-specific; CogNet does not execute the graph.
+              defaultModelRef:
+                description: defaultModelRef is applied to Agents of this class that
+                  omit a modelRef.
+                properties:
+                  name:
+                    description: name is the metadata.name of the referenced resource.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              defaultPolicyRefs:
+                description: defaultPolicyRefs are merged into every Agent of this
+                  class.
                 items:
-                  description: WorkflowStep is a single node in a workflow.
+                  description: |-
+                    LocalReference points at another CogNet resource by name, in the same
+                    namespace as the referring object. This is the primary composition primitive:
+                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
                   properties:
                     name:
-                      description: name uniquely identifies the step within the workflow.
+                      description: name is the metadata.name of the referenced resource.
                       minLength: 1
-                      type: string
-                    next:
-                      description: next lists the names of steps that may follow this
-                        one.
-                      items:
-                        type: string
-                      type: array
-                      x-kubernetes-list-type: atomic
-                    type:
-                      description: type categorizes the step (e.g. "planner", "tool",
-                        "reflect", "finish").
                       type: string
                   required:
                   - name
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
-              version:
-                description: version is the semantic version of the workflow definition.
+              defaultPromptRef:
+                description: defaultPromptRef is applied when an Agent omits a promptRef.
+                properties:
+                  name:
+                    description: name is the metadata.name of the referenced resource.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              defaultWorkflowRef:
+                description: defaultWorkflowRef is applied when an Agent omits a workflowRef.
+                properties:
+                  name:
+                    description: name is the metadata.name of the referenced resource.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              description:
+                description: description documents the class of agents this defines.
                 type: string
             type: object
           status:
-            description: status defines the observed state of Workflow
+            description: status defines the observed state of AgentClass
             properties:
               conditions:
                 items:
