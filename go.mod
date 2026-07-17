@@ -1,4 +1,4 @@
-module github.com/cognet/agent-plane
+module github.com/hkmdxlftjf/agent-plane
 
 go 1.24.5
 

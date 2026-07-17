@@ -27,7 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/cognet/agent-plane/api/v1alpha1"
+	corev1alpha1 "github.com/hkmdxlftjf/agent-plane/api/v1alpha1"
 )
 
 var _ = Describe("Agent Controller", func() {

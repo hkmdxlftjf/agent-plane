@@ -7,7 +7,7 @@ domain: cognet.io
 layout:
 - go.kubebuilder.io/v4
 projectName: agent-plane
-repo: github.com/cognet/agent-plane
+repo: github.com/hkmdxlftjf/agent-plane
 resources:
 - api:
     crdVersion: v1
@@ -16,7 +16,7 @@ resources:
   domain: cognet.io
   group: core
   kind: Agent
-  path: github.com/cognet/agent-plane/api/v1alpha1
+  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
   version: v1alpha1
   webhooks:
     validation: true
@@ -28,7 +28,7 @@ resources:
   domain: cognet.io
   group: core
   kind: AgentClass
-  path: github.com/cognet/agent-plane/api/v1alpha1
+  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -37,7 +37,7 @@ resources:
   domain: cognet.io
   group: core
   kind: Skill
-  path: github.com/cognet/agent-plane/api/v1alpha1
+  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
   version: v1alpha1
   webhooks:
     validation: true
@@ -49,7 +49,7 @@ resources:
   domain: cognet.io
   group: core
   kind: SkillSet
-  path: github.com/cognet/agent-plane/api/v1alpha1
+  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -58,7 +58,7 @@ resources:
   domain: cognet.io
   group: core
   kind: MCPServer
-  path: github.com/cognet/agent-plane/api/v1alpha1
+  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -67,7 +67,7 @@ resources:
   domain: cognet.io
   group: core
   kind: Workflow
-  path: github.com/cognet/agent-plane/api/v1alpha1
+  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
   version: v1alpha1
   webhooks:
     validation: true
@@ -79,7 +79,7 @@ resources:
   domain: cognet.io
   group: core
   kind: Model
-  path: github.com/cognet/agent-plane/api/v1alpha1
+  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -88,7 +88,7 @@ resources:
   domain: cognet.io
   group: core
   kind: PromptTemplate
-  path: github.com/cognet/agent-plane/api/v1alpha1
+  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -97,7 +97,7 @@ resources:
   domain: cognet.io
   group: core
   kind: Memory
-  path: github.com/cognet/agent-plane/api/v1alpha1
+  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -106,7 +106,7 @@ resources:
   domain: cognet.io
   group: core
   kind: KnowledgeBase
-  path: github.com/cognet/agent-plane/api/v1alpha1
+  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -115,7 +115,7 @@ resources:
   domain: cognet.io
   group: core
   kind: Policy
-  path: github.com/cognet/agent-plane/api/v1alpha1
+  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -124,7 +124,7 @@ resources:
   domain: cognet.io
   group: core
   kind: ToolPolicy
-  path: github.com/cognet/agent-plane/api/v1alpha1
+  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -133,6 +133,6 @@ resources:
   domain: cognet.io
   group: core
   kind: Credential
-  path: github.com/cognet/agent-plane/api/v1alpha1
+  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
   version: v1alpha1
 version: "3"

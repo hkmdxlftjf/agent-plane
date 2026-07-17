@@ -35,9 +35,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	corev1alpha1 "github.com/cognet/agent-plane/api/v1alpha1"
-	"github.com/cognet/agent-plane/internal/controller"
-	webhookv1alpha1 "github.com/cognet/agent-plane/internal/webhook/v1alpha1"
+	corev1alpha1 "github.com/hkmdxlftjf/agent-plane/api/v1alpha1"
+	"github.com/hkmdxlftjf/agent-plane/internal/controller"
+	webhookv1alpha1 "github.com/hkmdxlftjf/agent-plane/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 

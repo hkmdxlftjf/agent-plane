@@ -29,7 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	corev1alpha1 "github.com/cognet/agent-plane/api/v1alpha1"
+	corev1alpha1 "github.com/hkmdxlftjf/agent-plane/api/v1alpha1"
 )
 
 // CredentialReconciler reconciles a Credential object. It verifies that the

@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	corev1alpha1 "github.com/cognet/agent-plane/api/v1alpha1"
+	corev1alpha1 "github.com/hkmdxlftjf/agent-plane/api/v1alpha1"
 )
 
 var _ = Describe("Tool Webhook", func() {

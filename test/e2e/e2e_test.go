@@ -30,7 +30,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/cognet/agent-plane/test/utils"
+	"github.com/hkmdxlftjf/agent-plane/test/utils"
 )
 
 // namespace where the project is deployed in

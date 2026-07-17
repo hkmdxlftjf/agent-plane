@@ -43,8 +43,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/cognet/agent-plane/api/v1alpha1"
-	"github.com/cognet/agent-plane/internal/agentloop"
+	"github.com/hkmdxlftjf/agent-plane/api/v1alpha1"
+	"github.com/hkmdxlftjf/agent-plane/internal/agentloop"
 )
 
 var scheme = runtime.NewScheme()

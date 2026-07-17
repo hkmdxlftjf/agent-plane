@@ -180,7 +180,7 @@ func chat(ctx context.Context, endpoint, apiKey, model string, messages []oaMess
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("HTTP-Referer", "https://github.com/cognet/agent-plane")
+	req.Header.Set("HTTP-Referer", "https://github.com/hkmdxlftjf/agent-plane")
 	req.Header.Set("X-Title", "CogNet agentloop")
 
 	resp, err := (&http.Client{Timeout: 90 * time.Second}).Do(req)

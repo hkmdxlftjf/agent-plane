@@ -165,7 +165,7 @@ Use the typed API as a library (see `cmd/demo/main.go`):
 import (
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "sigs.k8s.io/controller-runtime/pkg/client"
-    "github.com/cognet/agent-plane/api/v1alpha1"
+    "github.com/hkmdxlftjf/agent-plane/api/v1alpha1"
 )
 
 _ = k.Create(ctx, &v1alpha1.Model{
