@@ -1,0 +1,14 @@
+apiVersion: core.cognet.io/v1alpha1
+kind: AgentClass
+metadata:
+  name: support-class
+spec:
+  description: Baseline defaults for customer-support agents.
+  defaultModelRef:
+    name: claude-opus
+  defaultWorkflowRef:
+    name: react-loop
+  defaultPromptRef:
+    name: support-prompt
+  defaultPolicyRefs:
+    - name: support-policy

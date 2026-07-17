@@ -1,0 +1,200 @@
+# CogNet — Kubernetes-Native Agent Control Plane
+
+CogNet is a **control plane** for AI Agents, built with the Kubernetes Operator
+pattern. It manages the *declaration, lifecycle, and configuration* of Agents
+and the resources they are composed from — Models, Tools, Skills, MCP servers,
+Workflows, Prompts, Memory, Policies, and more — as first-class Custom
+Resources.
+
+> CogNet is **not** an Agent runtime. It does not do inference, planning, ReAct,
+> tool-calling, or memory implementation. It declares resources, reconciles
+> desired state, and serves aggregated configuration to runtimes through the
+> **Registry**. Any Agent framework (LangGraph, OpenAI Agents SDK, CrewAI, …)
+> can plug in as a runtime.
+
+## Architecture
+
+```
+                Control Plane                         Data Plane
+  ┌────────────────────────────────────────┐   ┌─────────────────────────┐
+  │  kube-apiserver (CRDs)                 │   │  Agent Runtime          │
+  │        ▲                               │   │  MCP Runtime            │
+  │        │ watch/reconcile               │   │  Tool Runtime           │
+  │  ┌─────┴───────┐    ┌───────────────┐  │   │        ▲                │
+  │  │  Operator   │───▶│   Registry    │◀─┼───┼────────┘ HTTP (config)  │
+  │  │ (this repo) │    │ (cmd/registry)│  │   │  runtimes never call    │
+  │  └─────────────┘    └───────────────┘  │   │  the API server directly│
+  └────────────────────────────────────────┘   └─────────────────────────┘
+```
+
+- **Operator** (`cmd/main.go`, `internal/controller/`) watches all CogNet
+  resources, validates and resolves references, materializes workloads, and
+  publishes status.
+- **Registry** (`cmd/registry/`) is the single configuration source for
+  runtimes. Runtimes ask the Registry for an Agent's fully-resolved config;
+  they never talk to the Kubernetes API directly. It exposes:
+  - `GET /v1/agents/{ns}/{name}/config` — one-shot resolved config snapshot.
+  - `GET /v1/agents/{ns}/{name}/watch` — Server-Sent Events stream that pushes a
+    fresh config whenever the Agent changes (**hot reload**). The Registry
+    watches only Agents; the Operator folds dependency changes into the Agent's
+    `resolvedConfigHash`, so an Agent event covers any change that matters.
+- **Admission webhooks** (`internal/webhook/v1alpha1/`) validate *structural*
+  invariants at apply time (fail fast) for Agent (no duplicate refs), Workflow
+  (unique step names, no dangling `next`), and Tool (an `mcp` tool needs an
+  `mcpServerRef`). The same checks live in `api/v1alpha1/validation.go` and are
+  reused by the controllers — cross-object *existence* is deliberately left to
+  the controllers' eventual consistency so GitOps can apply in any order.
+
+## Resource model (`core.cognet.io/v1alpha1`)
+
+| Kind | Purpose |
+|------|---------|
+| **Agent** | Declares an agent as references to the capabilities it is built from. |
+| **AgentClass** | Reusable defaults inherited by Agents. |
+| **Model** | A model endpoint (openai/anthropic/azure/ollama/vllm/openrouter/custom). |
+| **Tool** | A single executable capability the agent *calls* (http/grpc/mcp/wasm/plugin/container). |
+| **ToolSet** | A named bundle of Tools. |
+| **Skill** | A markdown instruction pack (SKILL.md-style) that teaches the agent *how* to do something; may declare `allowedTools`. |
+| **MCPServer** | An MCP server; the Operator materializes it into a Deployment + Service. |
+| **Workflow** | Engine-neutral execution shape (planner/tool/reflect/finish). |
+| **PromptTemplate** | Versioned system/role prompts and few-shot examples. |
+| **Memory** | A memory/storage backend (redis/postgres/vector/graph/s3). |
+| **KnowledgeBase** | A retrieval corpus (RAG). |
+| **Policy** | Coarse allow/deny over models/memory/mcp/tools/workflows. |
+| **ToolPolicy** | Fine-grained per-Tool authorization and rate limits. |
+| **Credential** | Indirects secret material through a Kubernetes Secret. |
+
+### The two reference controllers
+
+- **`AgentReconciler`** — the *aggregating* pattern. Resolves every reference an
+  Agent declares; if any is missing, marks the Agent `Degraded` with reason
+  `ReferenceNotFound`. Otherwise computes a stable `resolvedConfigHash` over all
+  resolved references (so runtimes/Registry can detect drift) and marks the
+  Agent `Ready`. Watches all referenceable kinds so a change to a dependency
+  re-reconciles the Agents that use it.
+- **`MCPServerReconciler`** — the *resource-owning* pattern. Creates and owns a
+  `Deployment` + `Service` for each MCPServer via `CreateOrUpdate` +
+  `SetControllerReference`, and reflects availability into status.
+
+The remaining 11 controllers follow the same two shapes: **reference-resolving**
+(Model, Memory, Tool, ToolSet, Skill, KnowledgeBase, AgentClass, Credential) validate
+and resolve what they point at, and **validation-only** (Workflow, ToolPolicy,
+Policy, PromptTemplate) check internal consistency. Each watches the kinds it
+depends on, so the reference graph converges automatically — a resource stuck
+`Degraded` on a missing dependency flips to `Ready` as soon as that dependency
+is created.
+
+## Getting started
+
+Prerequisites: Go 1.24+, Docker, `kubectl`, and access to a cluster
+(e.g. `kind`).
+
+```sh
+# Generate code + CRDs (already committed, but safe to re-run)
+make generate manifests
+
+# Compile everything
+make build            # operator -> bin/manager
+make build-registry   # registry -> bin/registry
+
+# Install CRDs and run the operator against your current kube context
+make install
+make run
+
+# In another shell, apply the coherent sample set
+kubectl apply -k config/samples
+
+# Watch the Agent resolve its references and the MCPServer spawn a Deployment
+kubectl get agents,mcpservers
+kubectl get deploy,svc -l app.kubernetes.io/managed-by=cognet
+
+# Serve resolved config to runtimes and fetch one Agent's config
+make run-registry &
+curl localhost:9090/v1/agents/default/support-agent/config | jq
+
+# Stream hot-reload updates for one Agent (edit the Agent in another shell to see a push)
+curl -N localhost:9090/v1/agents/default/support-agent/watch
+```
+
+> Webhooks are wired into the manager and run by default; set
+> `ENABLE_WEBHOOKS=false` to disable them when running locally without certs.
+> In-cluster they require cert-manager (uncomment the `webhook`/`cert-manager`
+> entries in `config/default/kustomization.yaml`).
+
+## Demo: a real agent driven by CogNet
+
+`config/demo/` + `hack/demo.sh` stand up a complete Agent — Model + PromptTemplate
++ an MCP **Tool** (backed by an `MCPServer` the operator materializes) + a
+markdown **Skill** — and then run `cmd/agent-runtime`, a minimal *real* agent
+that:
+
+1. pulls the resolved config from the **Registry** (never the API server),
+2. reads the model API key from the referenced **Secret** via its own RBAC,
+3. reads the system prompt from the **PromptTemplate**, and
+4. runs a **tool-calling loop**: the model requests a tool, the runtime invokes
+   it over **MCP JSON-RPC**, feeds the result back, and returns the answer.
+
+```sh
+# operator must be deployed first (make deploy / config/local); needs an LLM key:
+#   ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN  (OpenAI-compatible gateway), or
+#   OPENROUTER_API_KEY
+bash hack/demo.sh "What is the status of order A-42?"
+```
+
+Sample output:
+
+```
+[step 1] model calls tool order-lookup({"orderId":"A-42"})
+         ↳ result: {"carrier":"UPS","eta":"2026-07-20","status":"shipped",...}
+✅ Final answer:
+Order A-42 is shipped via UPS with an ETA of July 20, 2026.
+```
+
+`agent-runtime` and `example-mcp` are **test fixtures**, not part of the control
+plane — they stand in for a real Agent framework and a real MCP tool server to
+prove the platform drives them end-to-end.
+
+## Operator-managed runtime (`spec.runtime`)
+
+By default CogNet is purely declarative: you bring your own runtime and point it
+at the Registry. Optionally, the Operator can **deploy the runtime for you** from
+the Agent CR (pull model) — set `spec.runtime` and the `AgentReconciler`
+materializes an owned Deployment (+ optional Service), the same way it
+materializes an `MCPServer`:
+
+```yaml
+spec:
+  modelRef: {name: llm-model}
+  runtime:
+    image: myorg/my-runtime:v1     # your runtime image (BYO); CogNet does not do inference
+    replicas: 2
+    port: 8080                     # optional → also creates a Service
+```
+
+The Operator injects `COGNET_REGISTRY`, `COGNET_AGENT_NAMESPACE`, and
+`COGNET_AGENT_NAME`; the runtime container pulls its config from the in-cluster
+Registry and hot-reloads on change. The reference image (`Dockerfile.agent-runtime`,
+`cmd/agent-runtime --watch`) does exactly this. In-cluster Registry manifests are
+in `config/registry/`. See **[docs/usage.md](docs/usage.md)** §8 and
+**[docs/runtime-protocol.md](docs/runtime-protocol.md)** for the full contract.
+
+## Documentation
+
+- **[docs/usage.md](docs/usage.md)** — full usage guide (deploy, declarative &
+  programmatic usage, data plane, runtime, demo, FAQ).
+- **[docs/runtime-protocol.md](docs/runtime-protocol.md)** — the runtime
+  configuration & change-notification protocol (v1).
+
+## Roadmap (out of scope for this scaffold)
+
+- Registry gRPC transport and event-bus fan-out (HTTP + SSE are implemented)
+- Defaulting / conversion webhooks (validating webhooks are implemented)
+- Reference-precise (field-indexed) re-reconciliation instead of the current
+  namespace-coarse dependency watches; scoped Secret watching for Credential
+- Multi-tenant scoping (Namespace / Cluster / Tenant)
+- Metrics dashboards and tracing wiring
+- Reference runtime integrations (LangGraph, Agents SDK, CrewAI)
+
+## License
+
+Apache 2.0.

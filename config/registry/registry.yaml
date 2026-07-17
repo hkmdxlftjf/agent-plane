@@ -1,0 +1,76 @@
+# In-cluster Registry (data-plane config endpoint). Read-only access to CogNet
+# resources; deliberately NO access to Secrets (runtimes read Secrets themselves).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cognet-registry
+  namespace: agent-plane-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cognet-registry
+rules:
+- apiGroups: ["core.cognet.io"]
+  resources:
+  - agents
+  - models
+  - tools
+  - toolsets
+  - skills
+  - mcpservers
+  - credentials
+  - prompttemplates
+  - memories
+  - policies
+  - agentclasses
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cognet-registry
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cognet-registry
+subjects:
+- kind: ServiceAccount
+  name: cognet-registry
+  namespace: agent-plane-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cognet-registry
+  namespace: agent-plane-system
+  labels: {app.kubernetes.io/name: cognet-registry}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: cognet-registry}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: cognet-registry}
+    spec:
+      serviceAccountName: cognet-registry
+      containers:
+      - name: registry
+        image: cognet-registry:dev
+        args: ["--addr", ":9090"]
+        ports:
+        - {name: http, containerPort: 9090}
+        resources:
+          requests: {cpu: 10m, memory: 64Mi}
+          limits: {cpu: 200m, memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cognet-registry
+  namespace: agent-plane-system
+  labels: {app.kubernetes.io/name: cognet-registry}
+spec:
+  selector: {app.kubernetes.io/name: cognet-registry}
+  ports:
+  - {name: http, port: 9090, targetPort: 9090}

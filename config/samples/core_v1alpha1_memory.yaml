@@ -1,0 +1,9 @@
+apiVersion: core.cognet.io/v1alpha1
+kind: Memory
+metadata:
+  name: session-memory
+spec:
+  backend: redis
+  namespace: support-sessions
+  connectionRef:
+    name: redis-conn

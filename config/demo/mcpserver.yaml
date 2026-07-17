@@ -1,0 +1,11 @@
+apiVersion: core.cognet.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: orders-mcp
+spec:
+  # Built by hack/demo.sh from Dockerfile.example-mcp into the local Docker
+  # daemon that the cluster shares (OrbStack/kind/minikube).
+  image: cognet-example-mcp:dev
+  transport: http
+  port: 8080
+  replicas: 1

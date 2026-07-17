@@ -1,0 +1,24 @@
+apiVersion: core.cognet.io/v1alpha1
+kind: Agent
+metadata:
+  name: support-agent
+spec:
+  description: Customer-support agent assembled from shared CogNet resources.
+  agentClassRef:
+    name: support-class
+  modelRef:
+    name: claude-opus
+  workflowRef:
+    name: react-loop
+  promptRef:
+    name: support-prompt
+  toolSetRefs:
+    - name: support-tools
+  toolRefs:
+    - name: order-lookup
+  skillRefs:
+    - name: refund-handling
+  memoryRefs:
+    - name: session-memory
+  policyRefs:
+    - name: support-policy

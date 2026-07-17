@@ -1,0 +1,21 @@
+apiVersion: core.cognet.io/v1alpha1
+kind: Skill
+metadata:
+  name: refund-handling
+spec:
+  version: "1.0.0"
+  description: How to process a customer refund safely and within policy.
+  # Inline markdown instruction pack (a SKILL.md body). Could instead be sourced
+  # from a ConfigMap via spec.contentConfigMapRef.
+  content: |
+    # Refund Handling
+
+    When a customer requests a refund:
+
+    1. Look up the order with the `order-lookup` tool to confirm it exists and is
+       eligible (delivered < 30 days ago, not already refunded).
+    2. Refunds under $100 can be issued directly. For $100 or more, ask the
+       reviewer role to confirm before proceeding.
+    3. Always tell the customer the expected settlement time (3–5 business days).
+  allowedTools:
+    - order-lookup

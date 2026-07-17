@@ -1,0 +1,12 @@
+apiVersion: core.cognet.io/v1alpha1
+kind: Model
+metadata:
+  name: claude-opus
+spec:
+  provider: anthropic
+  modelName: claude-opus-4-8
+  credentialRef:
+    name: anthropic-key
+  defaults:
+    temperature: "0.2"
+    maxTokens: 4096

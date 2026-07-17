@@ -1,0 +1,21 @@
+apiVersion: core.cognet.io/v1alpha1
+kind: Tool
+metadata:
+  name: order-lookup
+spec:
+  type: mcp
+  version: "1.2.0"
+  timeoutSeconds: 15
+  mcpServerRef:
+    name: orders-mcp
+  inputSchema:
+    type: object
+    properties:
+      orderId:
+        type: string
+    required: ["orderId"]
+  outputSchema:
+    type: object
+    properties:
+      status:
+        type: string

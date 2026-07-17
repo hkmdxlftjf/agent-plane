@@ -1,0 +1,15 @@
+# Build image for the example MCP server (a test fixture used to verify CogNet).
+FROM golang:1.26 AS builder
+ARG TARGETARCH
+WORKDIR /workspace
+COPY go.mod go.mod
+COPY go.sum go.sum
+RUN go mod download
+COPY cmd/example-mcp/ cmd/example-mcp/
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -a -o example-mcp ./cmd/example-mcp
+
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+COPY --from=builder /workspace/example-mcp .
+USER 65532:65532
+ENTRYPOINT ["/example-mcp"]

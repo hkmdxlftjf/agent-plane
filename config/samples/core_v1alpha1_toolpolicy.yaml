@@ -1,0 +1,12 @@
+apiVersion: core.cognet.io/v1alpha1
+kind: ToolPolicy
+metadata:
+  name: support-tool-policy
+spec:
+  defaultAction: allow
+  rules:
+    - tool: order-lookup
+      action: allow
+      maxCallsPerSession: 20
+    - tool: dangerous-refund-all
+      action: deny

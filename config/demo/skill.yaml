@@ -1,0 +1,17 @@
+apiVersion: core.cognet.io/v1alpha1
+kind: Skill
+metadata:
+  name: refund-handling
+spec:
+  version: "1.0.0"
+  description: How to process a customer refund safely and within policy.
+  content: |
+    # Refund Handling
+
+    When a customer asks about an order or a refund:
+
+    1. Use the `order-lookup` tool to confirm the order and its delivery status.
+    2. Refunds under $100 can be issued directly; $100+ needs reviewer sign-off.
+    3. Always state the carrier and ETA you found, and the expected settlement time.
+  allowedTools:
+    - order-lookup

@@ -1,0 +1,17 @@
+## Append samples of your project ##
+resources:
+- core_v1alpha1_agent.yaml
+- core_v1alpha1_agentclass.yaml
+- core_v1alpha1_tool.yaml
+- core_v1alpha1_toolset.yaml
+- core_v1alpha1_skill.yaml
+- core_v1alpha1_mcpserver.yaml
+- core_v1alpha1_workflow.yaml
+- core_v1alpha1_model.yaml
+- core_v1alpha1_prompttemplate.yaml
+- core_v1alpha1_memory.yaml
+- core_v1alpha1_knowledgebase.yaml
+- core_v1alpha1_policy.yaml
+- core_v1alpha1_toolpolicy.yaml
+- core_v1alpha1_credential.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

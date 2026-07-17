@@ -1,0 +1,16 @@
+# Local deploy overlay: CRDs + RBAC + manager only, WITHOUT webhooks or
+# cert-manager. Use this on a cluster that has no cert-manager installed
+# (e.g. a local OrbStack/kind/minikube cluster). The manager is configured with
+# ENABLE_WEBHOOKS=false (see config/manager/manager.yaml), so no webhook server
+# or serving certs are needed.
+#
+# Deploy with:
+#   make manifests && bin/kustomize build config/local | kubectl apply -f -
+# (or `make deploy` for the full cert-manager-backed install in config/default).
+namespace: agent-plane-system
+namePrefix: agent-plane-
+
+resources:
+- ../crd
+- ../rbac
+- ../manager
