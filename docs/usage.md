@@ -23,7 +23,7 @@ and serves the resolved configuration to runtimes through the **Registry**.
 6. [Data plane: config delivery & hot reload](#6-data-plane-config-delivery--hot-reload)
 7. [Running a real agent (Tool/MCP calls)](#7-running-a-real-agent-toolmcp-calls)
 8. [Operator-managed runtime (`spec.runtime`)](#8-operator-managed-runtime-specruntime)
-9. [One-click demo](#9-one-click-demo)
+9. [Running the reference runtime](#9-running-the-reference-runtime)
 10. [Verification & testing](#10-verification--testing)
 11. [Tool vs Skill](#11-tool-vs-skill)
 12. [FAQ](#12-faq)
@@ -159,7 +159,7 @@ A coherent sample set lives in `config/samples/`: `kubectl apply -k config/sampl
 
 ## 5. Programmatic usage: create an Agent in Go
 
-Use the typed API as a library (see `cmd/demo/main.go`):
+Use the typed API as a library:
 
 ```go
 import (
@@ -178,19 +178,11 @@ _ = k.Create(ctx, &v1alpha1.Model{
 _ = k.Create(ctx, &v1alpha1.Agent{
     ObjectMeta: metav1.ObjectMeta{Name: "support-agent", Namespace: ns},
     Spec: v1alpha1.AgentSpec{
-        ModelRef:  v1alpha1.LocalReference{Name: "llm-model"},
+        ModelRef:  &v1alpha1.LocalReference{Name: "llm-model"},
         ToolRefs:  []v1alpha1.LocalReference{{Name: "order-lookup"}},
     },
 })
 // then poll agent.Status.Phase == v1alpha1.AgentPhaseReady
-```
-
-Run the full code-based demo (create → wait → in-process port-forward → run
-agent → clean up):
-
-```sh
-export KUBECONFIG=$HOME/.kube/config
-go run ./cmd/demo "What is the status of order K-7?"
 ```
 
 ---
@@ -286,37 +278,38 @@ docker build -f Dockerfile.agent-runtime -t agent-plane-runtime:dev .   # image 
 
 ---
 
-## 9. One-click demo
+## 9. Running the reference runtime
 
-`hack/demo.sh` ties it together (detects an LLM credential, builds the MCP image,
-creates resources, waits, starts Registry + port-forward, runs the agent, cleans
-up):
+`cmd/agent-runtime` is a minimal real agent that pulls config from the Registry,
+reads the model key from the Secret, folds in Skill content / Memory / KnowledgeBase
+context, and runs a tool-calling loop. Point it at a deployed Agent:
 
 ```sh
-# operator deployed; an LLM credential in env:
-#   ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN   (OpenAI-compatible gateway), or
-#   OPENROUTER_API_KEY
-bash hack/demo.sh "What is the status of order A-42?"
-KEEP=1 bash hack/demo.sh
-DEMO_MODEL=claude-opus-4-6 bash hack/demo.sh
+export KUBECONFIG=$HOME/.kube/config
+# with an in-cluster Registry, port-forward it (or run `go run ./cmd/registry`):
+kubectl -n agent-plane-system port-forward svc/agent-plane-registry 9090:9090 &
+
+# one-shot:
+go run ./cmd/agent-runtime --registry http://localhost:9090 \
+  --namespace <ns> --name <agent> --prompt "What is the status of order A-42?"
+# interactive REPL:      add --chat
+# browser chat UI + API: add --serve   (or set AGENTPLANE_SERVE=1)
+# long-running hot-reload (the deployed default): add --watch
 ```
 
-Pure-Go equivalent (no YAML/bash/external kubectl): `go run ./cmd/demo "..."`.
+See **[quickstart-custom-agent.md](quickstart-custom-agent.md)** for the full
+declare → implement → deploy walkthrough.
 
 ---
 
 ## 10. Verification & testing
 
 ```sh
-# ① Code: envtest (real apiserver+etcd) — controller/webhook unit tests
+# ① Code: envtest (real apiserver+etcd) — controller/webhook unit tests + agentmemory
 make test
 
-# ② Platform: live-cluster behavior (ref convergence / secret detection / validation / MCPServer GC / Tool / Skill)
-export KUBECONFIG=$HOME/.kube/config
-bash hack/functional-test.sh
-
-# ③ Real agent: real model + real tool call
-bash hack/demo.sh          # or: go run ./cmd/demo
+# ② Real agent: real model + real tool call (see §9)
+go run ./cmd/agent-runtime --namespace <ns> --name <agent> --prompt "..."
 ```
 
 ---
@@ -350,8 +343,7 @@ tag so pull policy is `IfNotPresent`).
 
 **Host can't reach in-cluster `*.svc`?** That's host↔cluster networking, not a
 design flaw. In-cluster runtimes use svc DNS directly; from the host use
-`kubectl port-forward` + `--tool-endpoint name=url` (`cmd/demo` port-forwards
-in-process via client-go).
+`kubectl port-forward` + `--tool-endpoint name=url`.
 
 **`unknown field` on apply after a CRD change?** The cluster CRD is stale. Re-run
 `make manifests` then `kubectl apply -k config/crd` (or `config/local`).
@@ -368,21 +360,18 @@ api/v1alpha1/           # 14 CRD types + shared types + structural validation (v
 internal/controller/    # one reconciler per Kind; refutil.go = shared ref-resolution/watch helpers
 internal/webhook/       # validating admission webhooks (Agent/Workflow/Tool)
 internal/agentloop/     # reusable tool-calling loop (verification, not control plane)
+internal/agentmemory/   # zero-dependency Redis conversation store (verification, not control plane)
 cmd/main.go             # Operator (manager)
 cmd/registry/           # Registry (data-plane config endpoint: /config, /watch)
-cmd/agent-runtime/      # reference runtime (Registry-driven; one-shot + --watch modes)
-cmd/demo/               # pure-Go one-click demo (typed client + in-process port-forward)
+cmd/agent-runtime/      # reference runtime (Registry-driven; one-shot + --chat + --serve + --watch)
 cmd/example-mcp/        # minimal MCP server (test fixture)
 config/crd|rbac|manager # kustomize bases
 config/default          # full deploy (webhook/cert-manager)
 config/local            # local overlay (no webhook)
 config/registry         # in-cluster Registry (Deployment+Service+RBAC)
 config/samples          # coherent sample resources
-config/demo             # a complete Agent demo's manifests
-hack/demo.sh            # one-click demo script
-hack/functional-test.sh # live-cluster functional test (19 checks)
 ```
 
-> `cmd/agent-runtime`, `cmd/demo`, `cmd/example-mcp` are **verification fixtures**,
-> not part of the control plane — they stand in for real Agent frameworks and MCP
-> tool servers to prove the platform drives them end to end.
+> `cmd/agent-runtime`, `cmd/example-mcp` are **verification fixtures**, not part
+> of the control plane — they stand in for real Agent frameworks and MCP tool
+> servers to prove the platform drives them end to end.
