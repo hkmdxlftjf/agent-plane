@@ -5,7 +5,7 @@ metadata:
 spec:
   # Built by hack/demo.sh from Dockerfile.example-mcp into the local Docker
   # daemon that the cluster shares (OrbStack/kind/minikube).
-  image: cognet-example-mcp:dev
+  image: agent-plane-example-mcp:dev
   transport: http
   port: 8080
   replicas: 1

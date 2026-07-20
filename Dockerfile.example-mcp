@@ -1,4 +1,4 @@
-# Build image for the example MCP server (a test fixture used to verify CogNet).
+# Build image for the example MCP server (a test fixture used to verify Agent Plane).
 FROM golang:1.26 AS builder
 ARG TARGETARCH
 WORKDIR /workspace

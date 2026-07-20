@@ -75,7 +75,7 @@ spec:
                 description: memoryRefs lists Memory backends available to the agent.
                 items:
                   description: |-
-                    LocalReference points at another CogNet resource by name, in the same
+                    LocalReference points at another Agent Plane resource by name, in the same
                     namespace as the referring object. This is the primary composition primitive:
                     an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
                   properties:
@@ -105,7 +105,7 @@ spec:
                   access).
                 items:
                   description: |-
-                    LocalReference points at another CogNet resource by name, in the same
+                    LocalReference points at another Agent Plane resource by name, in the same
                     namespace as the referring object. This is the primary composition primitive:
                     an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
                   properties:
@@ -133,13 +133,13 @@ spec:
                 description: |-
                   runtime, when set, tells the Operator to materialize an in-cluster agent
                   runtime Deployment for this Agent (pull model: the container reads its
-                  config from the Registry). Omit to keep CogNet purely declarative and
+                  config from the Registry). Omit to keep Agent Plane purely declarative and
                   bring your own runtime.
                 properties:
                   env:
                     description: |-
                       env is extra environment passed to the runtime container. The Operator
-                      always injects COGNET_REGISTRY, COGNET_AGENT_NAMESPACE, COGNET_AGENT_NAME.
+                      always injects AGENTPLANE_REGISTRY, AGENTPLANE_AGENT_NAMESPACE, AGENTPLANE_AGENT_NAME.
                     items:
                       description: EnvVar represents an environment variable present
                         in a Container.
@@ -381,7 +381,7 @@ spec:
                   agent loads.
                 items:
                   description: |-
-                    LocalReference points at another CogNet resource by name, in the same
+                    LocalReference points at another Agent Plane resource by name, in the same
                     namespace as the referring object. This is the primary composition primitive:
                     an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
                   properties:
@@ -398,7 +398,7 @@ spec:
                 description: toolRefs lists individual Tools the agent may invoke.
                 items:
                   description: |-
-                    LocalReference points at another CogNet resource by name, in the same
+                    LocalReference points at another Agent Plane resource by name, in the same
                     namespace as the referring object. This is the primary composition primitive:
                     an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
                   properties:
@@ -416,7 +416,7 @@ spec:
                   agent inherits.
                 items:
                   description: |-
-                    LocalReference points at another CogNet resource by name, in the same
+                    LocalReference points at another Agent Plane resource by name, in the same
                     namespace as the referring object. This is the primary composition primitive:
                     an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
                   properties:

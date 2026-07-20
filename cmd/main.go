@@ -182,7 +182,7 @@ func main() {
 	if err := (&controller.AgentReconciler{
 		Client:      mgr.GetClient(),
 		Scheme:      mgr.GetScheme(),
-		RegistryURL: os.Getenv("COGNET_REGISTRY_URL"),
+		RegistryURL: os.Getenv("AGENTPLANE_REGISTRY_URL"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Agent")
 		os.Exit(1)

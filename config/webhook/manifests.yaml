@@ -10,7 +10,7 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-core-cognet-io-v1alpha1-agent
+      path: /validate-core-agent-plane-io-v1alpha1-agent
   failurePolicy: Fail
   name: vagent-v1alpha1.kb.io
   rules:
@@ -30,7 +30,7 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-core-cognet-io-v1alpha1-tool
+      path: /validate-core-agent-plane-io-v1alpha1-tool
   failurePolicy: Fail
   name: vtool-v1alpha1.kb.io
   rules:
@@ -50,7 +50,7 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-core-cognet-io-v1alpha1-workflow
+      path: /validate-core-agent-plane-io-v1alpha1-workflow
   failurePolicy: Fail
   name: vworkflow-v1alpha1.kb.io
   rules:

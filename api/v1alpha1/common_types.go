@@ -16,12 +16,12 @@ limitations under the License.
 
 package v1alpha1
 
-// This file holds types shared across the CogNet resource model. CogNet is a
+// This file holds types shared across the Agent Plane resource model. Agent Plane is a
 // control plane: resources reference one another by name within a namespace,
 // and the Operator resolves those references into runtime configuration served
 // by the Registry. Nothing here performs inference.
 
-// LocalReference points at another CogNet resource by name, in the same
+// LocalReference points at another Agent Plane resource by name, in the same
 // namespace as the referring object. This is the primary composition primitive:
 // an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
 type LocalReference struct {
@@ -32,7 +32,7 @@ type LocalReference struct {
 }
 
 // SecretKeyReference points at a key within a Kubernetes Secret. Credentials
-// and connection strings are never stored inline on CogNet resources; they are
+// and connection strings are never stored inline on Agent Plane resources; they are
 // always indirected through a Secret so that RBAC and existing secret tooling
 // (sealed-secrets, external-secrets, CSI drivers) apply unchanged.
 type SecretKeyReference struct {
@@ -61,7 +61,7 @@ type ConfigMapKeyReference struct {
 	Key string `json:"key"`
 }
 
-// Condition types used across CogNet resources.
+// Condition types used across Agent Plane resources.
 const (
 	// ConditionReady is the top-level condition summarizing whether a resource
 	// has been successfully reconciled and is usable by the Registry/runtimes.
@@ -71,7 +71,7 @@ const (
 	ConditionResolved = "Resolved"
 )
 
-// Condition reasons used across CogNet resources.
+// Condition reasons used across Agent Plane resources.
 const (
 	ReasonReconciled       = "Reconciled"
 	ReasonReferenceMissing = "ReferenceNotFound"

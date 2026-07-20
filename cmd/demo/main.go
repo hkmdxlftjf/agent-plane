@@ -14,14 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Command demo provisions a complete CogNet Agent entirely in code (no YAML,
+// Command demo provisions a complete Agent Plane Agent entirely in code (no YAML,
 // no kubectl), waits for it to become Ready, port-forwards to the in-cluster
 // MCP server in-process, then runs the agent loop — a real model making a real
 // MCP tool call. It is a verification harness that doubles as an example of
-// using the CogNet API types as a Go library.
+// using the Agent Plane API types as a Go library.
 //
 // Prereqs: the operator is deployed and running, Docker image
-// cognet-example-mcp:dev exists, and an LLM credential is in the environment
+// agent-plane-example-mcp:dev exists, and an LLM credential is in the environment
 // (ANTHROPIC_BASE_URL+ANTHROPIC_AUTH_TOKEN, or OPENROUTER_API_KEY).
 package main
 
@@ -51,7 +51,7 @@ import (
 	"github.com/hkmdxlftjf/agent-plane/internal/agentloop"
 )
 
-const ns = "cognet-demo-code"
+const ns = "agent-plane-demo-code"
 
 var scheme = runtime.NewScheme()
 
@@ -93,7 +93,7 @@ func main() {
 	}()
 
 	// 1. Provision everything in code.
-	fmt.Println("\n▶ Provisioning CogNet resources (in code)")
+	fmt.Println("\n▶ Provisioning Agent Plane resources (in code)")
 	if err := provision(ctx, k, provider, endpoint, model, apiKey); err != nil {
 		fatal("provision", err)
 	}
@@ -145,7 +145,7 @@ func main() {
 	fmt.Printf("\n✅ Final answer:\n%s\n", answer)
 }
 
-// provision creates the namespace, secret, and all CogNet CRs using the typed
+// provision creates the namespace, secret, and all Agent Plane CRs using the typed
 // API — the code equivalent of `kubectl apply -k config/demo`.
 func provision(ctx context.Context, k client.Client, provider, endpoint, model, apiKey string) error {
 	int32p := func(i int32) *int32 { return &i }
@@ -168,7 +168,7 @@ func provision(ctx context.Context, k client.Client, provider, endpoint, model, 
 		},
 		&v1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "orders-mcp", Namespace: ns},
-			Spec:       v1alpha1.MCPServerSpec{Image: "cognet-example-mcp:dev", Transport: "http", Port: 8080, Replicas: 1},
+			Spec:       v1alpha1.MCPServerSpec{Image: "agent-plane-example-mcp:dev", Transport: "http", Port: 8080, Replicas: 1},
 		},
 		&v1alpha1.Tool{
 			ObjectMeta: metav1.ObjectMeta{Name: "order-lookup", Namespace: ns},

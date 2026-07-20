@@ -92,7 +92,7 @@ func mcpLabels(mcp *corev1alpha1.MCPServer) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/name":       "mcpserver",
 		"app.kubernetes.io/instance":   mcp.Name,
-		"app.kubernetes.io/managed-by": "cognet",
+		"app.kubernetes.io/managed-by": "agent-plane",
 	}
 }
 

@@ -4,7 +4,7 @@ metadata:
   name: support-docs
 spec:
   source: s3
-  uri: s3://cognet-example/support-docs
+  uri: s3://agent-plane-example/support-docs
   embeddingModelRef:
     name: claude-opus
   memoryRef:

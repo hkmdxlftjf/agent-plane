@@ -1,10 +1,10 @@
-# CogNet Runtime Configuration & Change-Notification Protocol (v1)
+# Agent Plane Runtime Configuration & Change-Notification Protocol (v1)
 
 This spec defines **how the control plane (via the Registry) notifies a data-plane
 runtime of changes to an Agent and its dependencies**, and how the runtime should
 consume them. Any Agent runtime (LangGraph / Agents SDK / CrewAI / custom) that
 implements this spec can plug in — without reading the Kubernetes API or knowing
-CogNet internals.
+Agent Plane internals.
 
 Reference implementation: `cmd/registry/` (server), `cmd/agent-runtime/` +
 `internal/agentloop/` (client).

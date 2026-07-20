@@ -28,7 +28,7 @@ import (
 	corev1alpha1 "github.com/hkmdxlftjf/agent-plane/api/v1alpha1"
 )
 
-// WorkflowReconciler reconciles a Workflow object. CogNet does not execute the
+// WorkflowReconciler reconciles a Workflow object. Agent Plane does not execute the
 // workflow graph, but it validates the declaration is internally consistent:
 // step names are unique and every `next` target points at a declared step.
 type WorkflowReconciler struct {

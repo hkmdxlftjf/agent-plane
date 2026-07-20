@@ -49,7 +49,7 @@ import (
 type AgentReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
-	// RegistryURL is injected into materialized runtime pods as COGNET_REGISTRY.
+	// RegistryURL is injected into materialized runtime pods as AGENTPLANE_REGISTRY.
 	RegistryURL string
 }
 
@@ -244,14 +244,14 @@ func agentRuntimeLabels(agent *corev1alpha1.Agent) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/name":       "agent-runtime",
 		"app.kubernetes.io/instance":   agent.Name,
-		"app.kubernetes.io/managed-by": "cognet",
+		"app.kubernetes.io/managed-by": "agent-plane",
 	}
 }
 
 // reconcileRuntime materializes the agent runtime as an owned Deployment (and
 // optional Service). The runtime is a pull-model consumer: the Operator injects
 // where the Registry is and which Agent to load; the container reads its config
-// from the Registry (see docs/运行时通知协议.md). CogNet does not do inference —
+// from the Registry (see docs/运行时通知协议.md). Agent Plane does not do inference —
 // the image is user-supplied.
 func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alpha1.Agent) error {
 	rt := agent.Spec.Runtime
@@ -259,7 +259,7 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 	name := agent.Name + "-runtime"
 	registryURL := r.RegistryURL
 	if registryURL == "" {
-		registryURL = "http://cognet-registry.agent-plane-system.svc:9090"
+		registryURL = "http://agent-plane-registry.agent-plane-system.svc:9090"
 	}
 
 	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: agent.Namespace}}
@@ -270,9 +270,9 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 		dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 		dep.Spec.Template.ObjectMeta.Labels = labels
 		env := append([]corev1.EnvVar{
-			{Name: "COGNET_REGISTRY", Value: registryURL},
-			{Name: "COGNET_AGENT_NAMESPACE", Value: agent.Namespace},
-			{Name: "COGNET_AGENT_NAME", Value: agent.Name},
+			{Name: "AGENTPLANE_REGISTRY", Value: registryURL},
+			{Name: "AGENTPLANE_AGENT_NAMESPACE", Value: agent.Namespace},
+			{Name: "AGENTPLANE_AGENT_NAME", Value: agent.Name},
 		}, rt.Env...)
 		container := corev1.Container{
 			Name:      "runtime",

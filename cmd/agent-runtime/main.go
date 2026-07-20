@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 // Command agent-runtime is a MINIMAL but REAL agent runtime used to verify the
-// CogNet control plane end-to-end. It stands in for a real Agent framework:
+// Agent Plane control plane end-to-end. It stands in for a real Agent framework:
 // it pulls resolved config from the Registry (never the API server), reads the
 // model key from the referenced Secret via its own RBAC, reads the system
 // prompt from the PromptTemplate, then runs a tool-calling loop (see
@@ -104,14 +104,14 @@ func main() {
 	var chatMode bool
 	var serveMode bool
 	var serveAddr string
-	flag.StringVar(&registry, "registry", envOr("COGNET_REGISTRY", "http://localhost:9090"), "Registry base URL")
-	flag.StringVar(&ns, "namespace", envOr("COGNET_AGENT_NAMESPACE", "default"), "Agent namespace")
-	flag.StringVar(&name, "name", envOr("COGNET_AGENT_NAME", "demo-agent"), "Agent name")
+	flag.StringVar(&registry, "registry", envOr("AGENTPLANE_REGISTRY", "http://localhost:9090"), "Registry base URL")
+	flag.StringVar(&ns, "namespace", envOr("AGENTPLANE_AGENT_NAMESPACE", "default"), "Agent namespace")
+	flag.StringVar(&name, "name", envOr("AGENTPLANE_AGENT_NAME", "demo-agent"), "Agent name")
 	flag.StringVar(&prompt, "prompt", "What is the status of order A-42? Use the available tool.", "user prompt")
 	flag.IntVar(&maxSteps, "max-steps", 5, "max tool-calling turns")
-	flag.BoolVar(&watch, "watch", os.Getenv("COGNET_WATCH") == "1", "long-running mode: subscribe to the Registry and hot-reload config")
+	flag.BoolVar(&watch, "watch", os.Getenv("AGENTPLANE_WATCH") == "1", "long-running mode: subscribe to the Registry and hot-reload config")
 	flag.BoolVar(&chatMode, "chat", false, "interactive multi-turn chat with the agent (REPL over stdin)")
-	flag.BoolVar(&serveMode, "serve", os.Getenv("COGNET_SERVE") == "1", "web mode: serve a browser chat UI + HTTP API")
+	flag.BoolVar(&serveMode, "serve", os.Getenv("AGENTPLANE_SERVE") == "1", "web mode: serve a browser chat UI + HTTP API")
 	flag.StringVar(&serveAddr, "addr", ":"+envOr("PORT", "8080"), "web mode listen address")
 	flag.Var(overrides, "tool-endpoint", "override a tool endpoint: name=url (repeatable)")
 	flag.Parse()
@@ -121,7 +121,7 @@ func main() {
 	// Long-running data-plane mode: subscribe to the Registry and hot-reload.
 	// This is how an operator-materialized runtime pod runs (pull model).
 	// Serve mode takes precedence when both are set (the image CMD defaults to
-	// --watch, so COGNET_SERVE=1 switches a deployed pod to web mode).
+	// --watch, so AGENTPLANE_SERVE=1 switches a deployed pod to web mode).
 	if watch && !serveMode {
 		watchLoop(ctx, registry, ns, name)
 		return
@@ -357,7 +357,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 const webPage = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CogNet Agent</title>
+<title>Agent Plane Agent</title>
 <style>
   :root{color-scheme:light dark}
   body{font-family:system-ui,sans-serif;margin:0;background:#0b1020;color:#e6e9f0}
@@ -375,7 +375,7 @@ const webPage = `<!doctype html>
   button:disabled{opacity:.5}
 </style></head>
 <body>
-<header><b>CogNet Agent</b> — <span id="name">…</span><div id="meta"></div></header>
+<header><b>Agent Plane Agent</b> — <span id="name">…</span><div id="meta"></div></header>
 <div id="log"></div>
 <form id="f"><input id="in" placeholder="Ask about an order or the weather…" autocomplete="off" autofocus><button id="send">Send</button></form>
 <script>

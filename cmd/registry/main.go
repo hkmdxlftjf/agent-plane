@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Command registry is CogNet's Data-Plane configuration endpoint. Agent
+// Command registry is Agent Plane's Data-Plane configuration endpoint. Agent
 // runtimes talk to the Registry — never to the Kubernetes API server directly
 // (design §14/§16). Given an Agent name, the Registry returns the fully
 // resolved runtime configuration the Operator has assembled, and can stream

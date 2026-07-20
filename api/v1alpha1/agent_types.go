@@ -77,14 +77,14 @@ type AgentSpec struct {
 
 	// runtime, when set, tells the Operator to materialize an in-cluster agent
 	// runtime Deployment for this Agent (pull model: the container reads its
-	// config from the Registry). Omit to keep CogNet purely declarative and
+	// config from the Registry). Omit to keep Agent Plane purely declarative and
 	// bring your own runtime.
 	// +optional
 	Runtime *AgentRuntimeSpec `json:"runtime,omitempty"`
 }
 
 // AgentRuntimeSpec describes an operator-managed runtime workload for an Agent.
-// The runtime image is user-supplied; CogNet only schedules it and wires it to
+// The runtime image is user-supplied; Agent Plane only schedules it and wires it to
 // the Registry (it does not do inference itself).
 type AgentRuntimeSpec struct {
 	// image is the agent runtime container image to run.
@@ -105,7 +105,7 @@ type AgentRuntimeSpec struct {
 	Port int32 `json:"port,omitempty"`
 
 	// env is extra environment passed to the runtime container. The Operator
-	// always injects COGNET_REGISTRY, COGNET_AGENT_NAMESPACE, COGNET_AGENT_NAME.
+	// always injects AGENTPLANE_REGISTRY, AGENTPLANE_AGENT_NAMESPACE, AGENTPLANE_AGENT_NAME.
 	// +optional
 	// +listType=atomic
 	Env []corev1.EnvVar `json:"env,omitempty"`

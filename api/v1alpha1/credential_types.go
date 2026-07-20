@@ -20,7 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// CredentialSpec indirects secret material through a Kubernetes Secret. CogNet
+// CredentialSpec indirects secret material through a Kubernetes Secret. Agent Plane
 // never stores secrets inline; Models, Memory, and MCP servers reference a
 // Credential, which in turn points at a Secret key.
 type CredentialSpec struct {

@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 // Command example-mcp is a minimal Model Context Protocol server used to verify
-// CogNet end-to-end. It speaks MCP's JSON-RPC 2.0 over HTTP POST (a valid
+// Agent Plane end-to-end. It speaks MCP's JSON-RPC 2.0 over HTTP POST (a valid
 // Streamable-HTTP request/response), implementing initialize, tools/list, and
 // tools/call for a single demo tool: get_order_status(orderId).
 //
@@ -105,7 +105,7 @@ func handleRPC(w http.ResponseWriter, r *http.Request) {
 		writeResult(w, req.ID, map[string]any{
 			"protocolVersion": "2025-06-18",
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "cognet-example-mcp", "version": "0.1.0"},
+			"serverInfo":      map[string]any{"name": "agent-plane-example-mcp", "version": "0.1.0"},
 		})
 	case "tools/list":
 		writeResult(w, req.ID, map[string]any{

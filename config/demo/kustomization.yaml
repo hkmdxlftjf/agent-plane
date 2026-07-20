@@ -1,4 +1,4 @@
-# A complete, self-contained CogNet Agent demo (namespace: cognet-demo).
+# A complete, self-contained Agent Plane Agent demo (namespace: agent-plane-demo).
 #
 # The Model + Secret are environment-specific (they hold an API key and endpoint)
 # and are created by hack/demo.sh, not committed here. Everything else — the MCP
@@ -6,7 +6,7 @@
 # that ties them together — is declared below.
 #
 # Run it with:  bash hack/demo.sh
-namespace: cognet-demo
+namespace: agent-plane-demo
 
 resources:
 - credential.yaml

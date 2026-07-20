@@ -42,7 +42,7 @@ var _ = Describe("MCPServer Controller", func() {
 			mcp := &corev1alpha1.MCPServer{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
 				Spec: corev1alpha1.MCPServerSpec{
-					Image:    "ghcr.io/cognet/example-mcp:latest",
+					Image:    "ghcr.io/agent-plane/example-mcp:latest",
 					Port:     8080,
 					Replicas: 1,
 				},
@@ -66,7 +66,7 @@ var _ = Describe("MCPServer Controller", func() {
 			dep := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, key, dep)).To(Succeed())
 			Expect(dep.Spec.Template.Spec.Containers).To(HaveLen(1))
-			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(Equal("ghcr.io/cognet/example-mcp:latest"))
+			Expect(dep.Spec.Template.Spec.Containers[0].Image).To(Equal("ghcr.io/agent-plane/example-mcp:latest"))
 			Expect(dep.OwnerReferences).NotTo(BeEmpty())
 
 			By("creating a Service owned by the MCPServer")

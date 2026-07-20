@@ -3,7 +3,7 @@ kind: MCPServer
 metadata:
   name: orders-mcp
 spec:
-  image: ghcr.io/cognet/example-orders-mcp:latest
+  image: ghcr.io/agent-plane/example-orders-mcp:latest
   transport: http
   port: 8080
   replicas: 1

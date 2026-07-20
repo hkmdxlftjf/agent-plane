@@ -21,7 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// ToolType enumerates how a Tool is invoked. CogNet only records the
+// ToolType enumerates how a Tool is invoked. Agent Plane only records the
 // contract; the runtime performs the actual call.
 // +kubebuilder:validation:Enum=http;grpc;mcp;wasm;plugin;container
 type ToolType string

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Functional test of the deployed CogNet operator against the live cluster.
+# Functional test of the deployed Agent Plane operator against the live cluster.
 # Runs in an isolated namespace and asserts real controller behavior.
 set -uo pipefail
 export KUBECONFIG="$HOME/.kube/config"
-NS=cognet-func-test
+NS=agent-plane-func-test
 K="kubectl -n $NS"
 
 PASS=0; FAIL=0

@@ -22,7 +22,7 @@ import (
 
 // WorkflowSpec describes the execution shape of an agent (e.g. planner → tool →
 // reflect → finish). It is engine-neutral: the same Workflow can be realized by
-// LangGraph, an Agents SDK, CrewAI, etc. CogNet only stores the declaration.
+// LangGraph, an Agents SDK, CrewAI, etc. Agent Plane only stores the declaration.
 type WorkflowSpec struct {
 	// engine names the target runtime engine this workflow is authored for
 	// (e.g. "langgraph", "openai-agents", "crewai"). Free-form by design so new
@@ -35,7 +35,7 @@ type WorkflowSpec struct {
 	Version string `json:"version,omitempty"`
 
 	// steps is an ordered list of workflow steps. The interpretation of `next`
-	// is engine-specific; CogNet does not execute the graph.
+	// is engine-specific; Agent Plane does not execute the graph.
 	// +optional
 	// +listType=atomic
 	Steps []WorkflowStep `json:"steps,omitempty"`

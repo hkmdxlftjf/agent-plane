@@ -3,7 +3,7 @@ kind: Agent
 metadata:
   name: support-agent
 spec:
-  description: Customer-support agent assembled from shared CogNet resources.
+  description: Customer-support agent assembled from shared Agent Plane resources.
   agentClassRef:
     name: support-class
   modelRef:

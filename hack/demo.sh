@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# One-click CogNet Agent demo.
+# One-click Agent Plane Agent demo.
 #
 # Stands up a complete Agent (Model + Prompt + MCP Tool + Skill) in the
-# `cognet-demo` namespace, then runs the real agent-runtime against it so you
-# can watch a live model call a real MCP tool — all driven by CogNet config.
+# `agent-plane-demo` namespace, then runs the real agent-runtime against it so you
+# can watch a live model call a real MCP tool — all driven by Agent Plane config.
 #
 # Prerequisites:
-#   * The CogNet operator is deployed (make deploy / config/local) and running.
+#   * The Agent Plane operator is deployed (make deploy / config/local) and running.
 #   * An LLM credential in your env: either
 #       - ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN (OpenAI-compatible gateway), or
 #       - OPENROUTER_API_KEY
@@ -21,7 +21,7 @@ set -uo pipefail
 export KUBECONFIG="${KUBECONFIG_OVERRIDE:-$HOME/.kube/config}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
-NS=cognet-demo
+NS=agent-plane-demo
 PROMPT="${1:-What is the delivery status of order A-42? Give me the carrier and ETA.}"
 
 green() { printf '\033[32m%s\033[0m\n' "$1"; }
@@ -46,7 +46,7 @@ trap cleanup EXIT
 step "Preflight"
 echo "cluster: $(kubectl config current-context)"
 if ! kubectl -n agent-plane-system get deploy agent-plane-controller-manager >/dev/null 2>&1; then
-  red "CogNet operator not found in agent-plane-system. Deploy it first (see README)."
+  red "Agent Plane operator not found in agent-plane-system. Deploy it first (see README)."
   exit 1
 fi
 
@@ -70,10 +70,10 @@ fi
 
 # --- 1. build the example MCP image ------------------------------------------
 step "Building example MCP server image"
-if ! docker image inspect cognet-example-mcp:dev >/dev/null 2>&1; then
-  docker build -f Dockerfile.example-mcp -t cognet-example-mcp:dev . >/dev/null && green "built cognet-example-mcp:dev"
+if ! docker image inspect agent-plane-example-mcp:dev >/dev/null 2>&1; then
+  docker build -f Dockerfile.example-mcp -t agent-plane-example-mcp:dev . >/dev/null && green "built agent-plane-example-mcp:dev"
 else
-  green "cognet-example-mcp:dev already present"
+  green "agent-plane-example-mcp:dev already present"
 fi
 
 # --- 2. ensure CRDs are current, create namespace + env-specific resources ---
@@ -104,9 +104,9 @@ kubectl -n "$NS" get tool/order-lookup mcpserver/orders-mcp skill/refund-handlin
 
 # --- 4. start Registry + port-forward to the in-cluster MCP ------------------
 step "Starting Registry (data plane) + port-forward to MCP"
-KUBECONFIG="$KUBECONFIG" go run ./cmd/registry --addr :9090 >/tmp/cognet-demo-registry.log 2>&1 &
+KUBECONFIG="$KUBECONFIG" go run ./cmd/registry --addr :9090 >/tmp/agent-plane-demo-registry.log 2>&1 &
 REGISTRY_PID=$!
-KUBECONFIG="$KUBECONFIG" kubectl -n "$NS" port-forward svc/orders-mcp 18080:8080 >/tmp/cognet-demo-pf.log 2>&1 &
+KUBECONFIG="$KUBECONFIG" kubectl -n "$NS" port-forward svc/orders-mcp 18080:8080 >/tmp/agent-plane-demo-pf.log 2>&1 &
 PF_PID=$!
 # wait for registry
 for _ in $(seq 1 30); do curl -sf localhost:9090/healthz >/dev/null 2>&1 && break; sleep 1; done

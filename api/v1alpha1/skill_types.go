@@ -48,7 +48,7 @@ type SkillSpec struct {
 	ContentConfigMapRef *ConfigMapKeyReference `json:"contentConfigMapRef,omitempty"`
 
 	// allowedTools lists the names of Tools this skill is permitted to invoke.
-	// The runtime enforces it; CogNet records it.
+	// The runtime enforces it; Agent Plane records it.
 	// +optional
 	// +listType=set
 	AllowedTools []string `json:"allowedTools,omitempty"`

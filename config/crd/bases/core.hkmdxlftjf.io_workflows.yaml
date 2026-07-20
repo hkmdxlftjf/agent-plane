@@ -57,7 +57,7 @@ spec:
               steps:
                 description: |-
                   steps is an ordered list of workflow steps. The interpretation of `next`
-                  is engine-specific; CogNet does not execute the graph.
+                  is engine-specific; Agent Plane does not execute the graph.
                 items:
                   description: WorkflowStep is a single node in a workflow.
                   properties:

@@ -45,7 +45,7 @@ func SetupAgentWebhookWithManager(mgr ctrl.Manager) error {
 // TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
 // NOTE: The 'path' attribute must follow a specific pattern and should not be modified directly here.
 // Modifying the path for an invalid path can cause API server errors; failing to locate the webhook.
-// +kubebuilder:webhook:path=/validate-core-cognet-io-v1alpha1-agent,mutating=false,failurePolicy=fail,sideEffects=None,groups=core.hkmdxlftjf.io,resources=agents,verbs=create;update,versions=v1alpha1,name=vagent-v1alpha1.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-core-agent-plane-io-v1alpha1-agent,mutating=false,failurePolicy=fail,sideEffects=None,groups=core.hkmdxlftjf.io,resources=agents,verbs=create;update,versions=v1alpha1,name=vagent-v1alpha1.kb.io,admissionReviewVersions=v1
 
 // AgentCustomValidator struct is responsible for validating the Agent resource
 // when it is created, updated, or deleted.

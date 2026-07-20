@@ -1,12 +1,12 @@
-# CogNet — Kubernetes-Native Agent Control Plane
+# Agent Plane — Kubernetes-Native Agent Control Plane
 
-CogNet is a **control plane** for AI Agents, built with the Kubernetes Operator
+Agent Plane is a **control plane** for AI Agents, built with the Kubernetes Operator
 pattern. It manages the *declaration, lifecycle, and configuration* of Agents
 and the resources they are composed from — Models, Tools, Skills, MCP servers,
 Workflows, Prompts, Memory, Policies, and more — as first-class Custom
 Resources.
 
-> CogNet is **not** an Agent runtime. It does not do inference, planning, ReAct,
+> Agent Plane is **not** an Agent runtime. It does not do inference, planning, ReAct,
 > tool-calling, or memory implementation. It declares resources, reconciles
 > desired state, and serves aggregated configuration to runtimes through the
 > **Registry**. Any Agent framework (LangGraph, OpenAI Agents SDK, CrewAI, …)
@@ -27,7 +27,7 @@ Resources.
   └────────────────────────────────────────┘   └─────────────────────────┘
 ```
 
-- **Operator** (`cmd/main.go`, `internal/controller/`) watches all CogNet
+- **Operator** (`cmd/main.go`, `internal/controller/`) watches all Agent Plane
   resources, validates and resolves references, materializes workloads, and
   publishes status.
 - **Registry** (`cmd/registry/`) is the single configuration source for
@@ -106,7 +106,7 @@ kubectl apply -k config/samples
 
 # Watch the Agent resolve its references and the MCPServer spawn a Deployment
 kubectl get agents,mcpservers
-kubectl get deploy,svc -l app.kubernetes.io/managed-by=cognet
+kubectl get deploy,svc -l app.kubernetes.io/managed-by=agent-plane
 
 # Serve resolved config to runtimes and fetch one Agent's config
 make run-registry &
@@ -121,7 +121,7 @@ curl -N localhost:9090/v1/agents/default/support-agent/watch
 > In-cluster they require cert-manager (uncomment the `webhook`/`cert-manager`
 > entries in `config/default/kustomization.yaml`).
 
-## Demo: a real agent driven by CogNet
+## Demo: a real agent driven by Agent Plane
 
 `config/demo/` + `hack/demo.sh` stand up a complete Agent — Model + PromptTemplate
 + an MCP **Tool** (backed by an `MCPServer` the operator materializes) + a
@@ -156,7 +156,7 @@ prove the platform drives them end-to-end.
 
 ## Operator-managed runtime (`spec.runtime`)
 
-By default CogNet is purely declarative: you bring your own runtime and point it
+By default Agent Plane is purely declarative: you bring your own runtime and point it
 at the Registry. Optionally, the Operator can **deploy the runtime for you** from
 the Agent CR (pull model) — set `spec.runtime` and the `AgentReconciler`
 materializes an owned Deployment (+ optional Service), the same way it
@@ -166,13 +166,13 @@ materializes an `MCPServer`:
 spec:
   modelRef: {name: llm-model}
   runtime:
-    image: myorg/my-runtime:v1     # your runtime image (BYO); CogNet does not do inference
+    image: myorg/my-runtime:v1     # your runtime image (BYO); Agent Plane does not do inference
     replicas: 2
     port: 8080                     # optional → also creates a Service
 ```
 
-The Operator injects `COGNET_REGISTRY`, `COGNET_AGENT_NAMESPACE`, and
-`COGNET_AGENT_NAME`; the runtime container pulls its config from the in-cluster
+The Operator injects `AGENTPLANE_REGISTRY`, `AGENTPLANE_AGENT_NAMESPACE`, and
+`AGENTPLANE_AGENT_NAME`; the runtime container pulls its config from the in-cluster
 Registry and hot-reloads on change. The reference image (`Dockerfile.agent-runtime`,
 `cmd/agent-runtime --watch`) does exactly this. In-cluster Registry manifests are
 in `config/registry/`. See **[docs/usage.md](docs/usage.md)** §8 and

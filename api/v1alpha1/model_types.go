@@ -20,7 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ModelProvider enumerates the model backends CogNet can describe. The control
+// ModelProvider enumerates the model backends Agent Plane can describe. The control
 // plane does not call these providers itself; it records how a runtime should.
 // +kubebuilder:validation:Enum=openai;anthropic;azure-openai;ollama;vllm;openrouter;custom
 type ModelProvider string

@@ -1,11 +1,11 @@
-# CogNet Usage Guide
+# Agent Plane Usage Guide
 
-CogNet is a **Kubernetes-native control plane for AI Agents**. It uses the
+Agent Plane is a **Kubernetes-native control plane for AI Agents**. It uses the
 Operator pattern to declaratively manage Agents and everything they are composed
 from (Model / Tool / Skill / MCPServer / Workflow / Prompt / Memory / Policy …),
 and serves the resolved configuration to runtimes through the **Registry**.
 
-> **Positioning.** CogNet is **not** an Agent runtime. It does not do inference,
+> **Positioning.** Agent Plane is **not** an Agent runtime. It does not do inference,
 > planning/ReAct, tool-calling, or memory. It handles declaration, lifecycle,
 > config aggregation, service discovery, status, and observability. The actual
 > execution is done by a *runtime* (LangGraph / OpenAI Agents SDK / CrewAI / your
@@ -45,7 +45,7 @@ and serves the resolved configuration to runtimes through the **Registry**.
   └──────────────────────────────────┘        └──────────────────────────┘
 ```
 
-- **Operator** (`cmd/main.go` + `internal/controller/`): watches all CogNet
+- **Operator** (`cmd/main.go` + `internal/controller/`): watches all Agent Plane
   resources, validates, resolves references, materializes workloads (e.g.
   MCPServer → Deployment/Service, and optionally the agent runtime), publishes
   status.
@@ -83,7 +83,7 @@ API group `core.hkmdxlftjf.io/v1alpha1`, all Namespaced.
 | **ToolPolicy** | tp | Fine-grained per-Tool authorization and rate limits. |
 | **Credential** | cred | Indirects secret material through a K8s Secret (never inline). |
 
-Inspect: `kubectl get crd | grep cognet`, `kubectl explain agent.spec`.
+Inspect: `kubectl get crd | grep agent-plane`, `kubectl explain agent.spec`.
 
 ---
 
@@ -97,7 +97,7 @@ minikube).
 ```sh
 export KUBECONFIG=$HOME/.kube/config      # point at your local cluster
 
-make docker-build IMG=cognet:dev          # local Docker shared with cluster → no push
+make docker-build IMG=agent-plane:dev          # local Docker shared with cluster → no push
 bin/kustomize build config/local | kubectl apply -f -   # CRDs + RBAC + manager
 kubectl -n agent-plane-system rollout restart deploy/agent-plane-controller-manager
 kubectl -n agent-plane-system rollout status  deploy/agent-plane-controller-manager
@@ -109,7 +109,7 @@ The full install is `config/default` (`make deploy IMG=…`, needs cert-manager)
 ### 3.2 In-cluster Registry (needed for in-cluster runtimes)
 
 ```sh
-docker build -f Dockerfile.registry -t cognet-registry:dev .
+docker build -f Dockerfile.registry -t agent-plane-registry:dev .
 kubectl apply -f config/registry/registry.yaml   # Deployment+Service+SA (read-only, no Secret access)
 ```
 
@@ -234,7 +234,7 @@ go run ./cmd/agent-runtime --namespace default --name my-agent \
 
 ## 8. Operator-managed runtime (`spec.runtime`)
 
-By default CogNet is purely declarative — you bring your own runtime and point it
+By default Agent Plane is purely declarative — you bring your own runtime and point it
 at the Registry. Optionally, the Operator can **deploy the runtime for you** from
 the Agent CR (pull model): set `spec.runtime` and the `AgentReconciler`
 materializes an owned Deployment (+ optional Service), just like it materializes
@@ -248,7 +248,7 @@ spec:
   modelRef: {name: llm-model}
   toolRefs: [{name: order-lookup}]
   runtime:
-    image: myorg/my-runtime:v1     # your runtime image (BYO); CogNet does not do inference
+    image: myorg/my-runtime:v1     # your runtime image (BYO); Agent Plane does not do inference
     replicas: 2
     port: 8080                     # optional → also creates a Service
     # env: [...]  resources: {...}
@@ -258,8 +258,8 @@ The Operator injects into each runtime pod:
 
 | Env | Value |
 |---|---|
-| `COGNET_REGISTRY` | in-cluster Registry URL (default `http://cognet-registry.agent-plane-system.svc:9090`; override with the manager's `COGNET_REGISTRY_URL`) |
-| `COGNET_AGENT_NAMESPACE` / `COGNET_AGENT_NAME` | which Agent to load |
+| `AGENTPLANE_REGISTRY` | in-cluster Registry URL (default `http://agent-plane-registry.agent-plane-system.svc:9090`; override with the manager's `AGENTPLANE_REGISTRY_URL`) |
+| `AGENTPLANE_AGENT_NAMESPACE` / `AGENTPLANE_AGENT_NAME` | which Agent to load |
 
 The runtime container then pulls its config from the Registry and hot-reloads on
 change (pull model — see the reference `--watch` mode below). The Deployment is
@@ -271,15 +271,15 @@ mode (the container default) that subscribes to the Registry, reads the Secret
 via its ServiceAccount RBAC, and hot-reloads:
 
 ```sh
-docker build -f Dockerfile.agent-runtime -t cognet-agent-runtime:dev .   # image defaults to --watch
-# then reference it: spec.runtime.image: cognet-agent-runtime:dev
+docker build -f Dockerfile.agent-runtime -t agent-plane-runtime:dev .   # image defaults to --watch
+# then reference it: spec.runtime.image: agent-plane-runtime:dev
 ```
 
 > The runtime pod needs RBAC to `get` Secrets in its namespace (for the model
-> key). Grant its ServiceAccount a `Role`/`RoleBinding` accordingly; CogNet does
+> key). Grant its ServiceAccount a `Role`/`RoleBinding` accordingly; Agent Plane does
 > not provision that for you.
 >
-> **Push vs pull:** CogNet uses **pull** (each runtime pod reconciles itself from
+> **Push vs pull:** Agent Plane uses **pull** (each runtime pod reconciles itself from
 > the Registry). This is self-healing, handles multiple replicas and new pods,
 > and avoids coupling the control plane to data-plane reachability — the same
 > reasons Kubernetes itself is pull-based.

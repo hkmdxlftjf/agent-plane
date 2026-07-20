@@ -16,7 +16,7 @@ limitations under the License.
 
 // Package agentloop is a minimal, reusable agent execution loop used by the
 // verification runtimes (cmd/agent-runtime and cmd/demo). It is deliberately
-// NOT part of the CogNet control plane — it stands in for a real Agent
+// NOT part of the Agent Plane control plane — it stands in for a real Agent
 // framework. It calls an OpenAI-compatible chat endpoint and executes tool
 // calls against http tools (POST) and mcp tools (JSON-RPC tools/call).
 package agentloop
@@ -181,7 +181,7 @@ func chat(ctx context.Context, endpoint, apiKey, model string, messages []oaMess
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("HTTP-Referer", "https://github.com/hkmdxlftjf/agent-plane")
-	req.Header.Set("X-Title", "CogNet agentloop")
+	req.Header.Set("X-Title", "Agent Plane agentloop")
 
 	resp, err := (&http.Client{Timeout: 90 * time.Second}).Do(req)
 	if err != nil {
@@ -260,7 +260,7 @@ func callMCPTool(ctx context.Context, endpoint, toolName, argsJSON string) (stri
 	if _, err := mcpRPC(ctx, endpoint, 1, "initialize", map[string]any{
 		"protocolVersion": "2025-06-18",
 		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]any{"name": "cognet-agentloop", "version": "0.1.0"},
+		"clientInfo":      map[string]any{"name": "agent-plane-agentloop", "version": "0.1.0"},
 	}); err != nil {
 		return "", fmt.Errorf("initialize: %w", err)
 	}
