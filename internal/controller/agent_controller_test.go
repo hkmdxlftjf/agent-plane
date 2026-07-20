@@ -50,7 +50,7 @@ var _ = Describe("Agent Controller", func() {
 			By("creating the Agent referencing the Model")
 			agent := &corev1alpha1.Agent{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
-				Spec:       corev1alpha1.AgentSpec{ModelRef: corev1alpha1.LocalReference{Name: modelName}},
+				Spec:       corev1alpha1.AgentSpec{ModelRef: &corev1alpha1.LocalReference{Name: modelName}},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
 		})
@@ -88,7 +88,7 @@ var _ = Describe("Agent Controller", func() {
 		BeforeEach(func() {
 			agent := &corev1alpha1.Agent{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
-				Spec:       corev1alpha1.AgentSpec{ModelRef: corev1alpha1.LocalReference{Name: "does-not-exist"}},
+				Spec:       corev1alpha1.AgentSpec{ModelRef: &corev1alpha1.LocalReference{Name: "does-not-exist"}},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
 		})

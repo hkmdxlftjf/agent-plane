@@ -15,11 +15,13 @@ limitations under the License.
 */
 
 // Command agent-runtime is a MINIMAL but REAL agent runtime used to verify the
-// Agent Plane control plane end-to-end. It stands in for a real Agent framework:
-// it pulls resolved config from the Registry (never the API server), reads the
-// model key from the referenced Secret via its own RBAC, reads the system
-// prompt from the PromptTemplate, then runs a tool-calling loop (see
-// internal/agentloop) that actually invokes http and mcp Tools.
+// Agent Plane control plane end-to-end. It stands in for a real Agent
+// framework, and is built entirely on the runtime SDK
+// (github.com/hkmdxlftjf/agent-plane-sdk-go): it pulls resolved config from
+// the Registry (never the API server), reads the model key and memory DSN from
+// the referenced Secrets via its own RBAC, then runs a tool-calling loop that
+// actually invokes http and mcp Tools. A custom runtime does exactly this with
+// its own framework in place of the SDK's reference agentloop.
 package main
 
 import (
@@ -28,61 +30,18 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
-	"k8s.io/apimachinery/pkg/runtime"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	corev1 "k8s.io/api/core/v1"
-
-	"github.com/hkmdxlftjf/agent-plane/api/v1alpha1"
-	"github.com/hkmdxlftjf/agent-plane/internal/agentloop"
+	sdk "github.com/hkmdxlftjf/agent-plane-sdk-go"
+	"github.com/hkmdxlftjf/agent-plane-sdk-go/agentloop"
+	"github.com/hkmdxlftjf/agent-plane-sdk-go/memory"
+	"github.com/hkmdxlftjf/agent-plane-sdk-go/retriever"
+	"github.com/hkmdxlftjf/agent-plane-sdk-go/secrets"
 )
-
-var scheme = runtime.NewScheme()
-
-func init() {
-	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(v1alpha1.AddToScheme(scheme))
-}
-
-type toolView struct {
-	Name        string          `json:"name"`
-	Type        string          `json:"type"`
-	Description string          `json:"description"`
-	Endpoint    string          `json:"endpoint"`
-	MCPToolName string          `json:"mcpToolName"`
-	InputSchema json.RawMessage `json:"inputSchema"`
-}
-
-type registryConfig struct {
-	Namespace  string     `json:"namespace"`
-	Name       string     `json:"name"`
-	Phase      string     `json:"phase"`
-	ConfigHash string     `json:"configHash"`
-	Tools      []toolView `json:"tools"`
-	Skills     []string   `json:"skills"`
-	Model      *struct {
-		Provider   string `json:"provider"`
-		ModelName  string `json:"modelName"`
-		Endpoint   string `json:"endpoint"`
-		SecretName string `json:"secretName"`
-		SecretKey  string `json:"secretKey"`
-	} `json:"model"`
-	Spec struct {
-		PromptRef *struct {
-			Name string `json:"name"`
-		} `json:"promptRef"`
-	} `json:"spec"`
-}
 
 type endpointOverrides map[string]string
 
@@ -117,22 +76,23 @@ func main() {
 	flag.Parse()
 
 	ctx := context.Background()
+	rc := sdk.NewClient(registry, sdk.WithLogf(func(f string, a ...any) { fmt.Printf("  "+f+"\n", a...) }))
 
 	// Long-running data-plane mode: subscribe to the Registry and hot-reload.
 	// This is how an operator-materialized runtime pod runs (pull model).
 	// Serve mode takes precedence when both are set (the image CMD defaults to
 	// --watch, so AGENTPLANE_SERVE=1 switches a deployed pod to web mode).
 	if watch && !serveMode {
-		watchLoop(ctx, registry, ns, name)
+		watchLoop(ctx, rc, ns, name)
 		return
 	}
 
-	cfg, err := fetchConfig(ctx, registry, ns, name)
+	cfg, err := rc.FetchConfig(ctx, ns, name)
 	if err != nil {
 		fatal("fetch config from registry", err)
 	}
 	fmt.Printf("▶ Registry config for %s/%s (phase=%s)\n", cfg.Namespace, cfg.Name, cfg.Phase)
-	if cfg.Phase != "Ready" {
+	if cfg.Phase != sdk.PhaseReady {
 		fatal("agent not ready", fmt.Errorf("phase=%s", cfg.Phase))
 	}
 	if cfg.Model == nil {
@@ -147,105 +107,115 @@ func main() {
 		fmt.Printf("  tool: %s (type=%s) -> %s\n", cfg.Tools[i].Name, cfg.Tools[i].Type, cfg.Tools[i].Endpoint)
 	}
 
-	kcfg, err := ctrl.GetConfig()
+	sec, err := secrets.NewReader(ns)
 	if err != nil {
-		fatal("load kubeconfig", err)
+		fatal("build secret reader", err)
 	}
-	k, err := client.New(kcfg, client.Options{Scheme: scheme})
-	if err != nil {
-		fatal("build k8s client", err)
-	}
-
-	apiKey, err := readSecretKey(ctx, k, ns, cfg.Model.SecretName, cfg.Model.SecretKey)
+	apiKey, err := sec.Read(ctx, cfg.Model.SecretName, cfg.Model.SecretKey)
 	if err != nil {
 		fatal("read model credential secret", err)
 	}
 
-	system := "You are a helpful assistant. Use tools when they can answer the question."
-	if cfg.Spec.PromptRef != nil {
-		var pt v1alpha1.PromptTemplate
-		if err := k.Get(ctx, client.ObjectKey{Namespace: ns, Name: cfg.Spec.PromptRef.Name}, &pt); err == nil && pt.Spec.System != "" {
-			system = pt.Spec.System
-		}
-	}
+	system := buildSystemPrompt(cfg, func(f string, a ...any) { fmt.Printf("  "+f+"\n", a...) })
+
+	// Open a persistent memory backend if the Agent references one. The runtime
+	// reads the connection DSN from the Secret itself (Registry serves only
+	// coordinates), mirroring how the model key is read.
+	store := openMemory(ctx, sec, cfg.Memories)
+
+	// Build a RAG retriever from any referenced KnowledgeBases. The SDK
+	// retriever serves http-source KBs; other sources are declared but their
+	// retrieval is left to a real runtime.
+	rag := newRetriever(cfg.Knowledge)
 
 	endpoint := cfg.Model.Endpoint
 	if endpoint == "" && cfg.Model.Provider == "openrouter" {
 		endpoint = "https://openrouter.ai/api/v1"
 	}
 
-	tools := make([]agentloop.Tool, 0, len(cfg.Tools))
-	for _, t := range cfg.Tools {
-		tools = append(tools, agentloop.Tool{
-			Name: t.Name, Type: t.Type, Description: t.Description,
-			Endpoint: t.Endpoint, MCPToolName: t.MCPToolName, InputSchema: t.InputSchema,
-		})
-	}
-
 	base := agentloop.Config{
 		Endpoint: endpoint, APIKey: apiKey, Model: cfg.Model.ModelName,
-		System: system, Tools: tools, MaxSteps: maxSteps,
+		System: system, Tools: cfg.Tools, MaxSteps: maxSteps,
 		Logf: func(f string, a ...any) { fmt.Printf("  "+f+"\n", a...) },
 	}
 
 	// Web mode: serve a browser chat UI + HTTP API.
 	if serveMode {
-		serveHTTP(ctx, name, cfg, base, serveAddr)
+		serveHTTP(ctx, name, cfg, base, serveAddr, store, rag)
 		return
 	}
 
 	// Interactive chat: multi-turn REPL over stdin.
 	if chatMode {
-		chatREPL(ctx, name, base)
+		chatREPL(ctx, name, base, store, rag)
 		return
 	}
 
 	fmt.Printf("\n▶ Running agent loop (prompt: %q)\n", prompt)
-	base.Prompt = prompt
-	answer, err := agentloop.Run(ctx, base)
+	answer, err := agentloop.Run(ctx, base, rag.Augment(ctx, prompt))
 	if err != nil {
 		fatal("agent loop", err)
 	}
 	fmt.Printf("\n✅ Final answer:\n%s\n", answer)
 }
 
-func fetchConfig(ctx context.Context, registry, ns, name string) (*registryConfig, error) {
-	url := fmt.Sprintf("%s/v1/agents/%s/%s/config", registry, ns, name)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
+// buildSystemPrompt composes the Registry-resolved PromptTemplate system text
+// with the Agent's Skill instruction packs (order preserved).
+func buildSystemPrompt(cfg *sdk.AgentConfig, logf func(string, ...any)) string {
+	system := "You are a helpful assistant. Use tools when they can answer the question."
+	if cfg.Prompt != nil && cfg.Prompt.System != "" {
+		system = cfg.Prompt.System
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("registry %d: %s", resp.StatusCode, body)
+	for _, sk := range cfg.Skills {
+		if sk.Content != "" {
+			system += "\n\n# Skill: " + sk.Name + "\n" + sk.Content
+			logf("skill: %s (%d chars)", sk.Name, len(sk.Content))
+		}
 	}
-	var cfg registryConfig
-	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
-		return nil, err
-	}
-	return &cfg, nil
-}
-
-func readSecretKey(ctx context.Context, k client.Client, ns, name, key string) (string, error) {
-	if name == "" {
-		return "", fmt.Errorf("model has no credential secret; set a Credential+Secret")
-	}
-	var secret corev1.Secret
-	if err := k.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &secret); err != nil {
-		return "", err
-	}
-	v, ok := secret.Data[key]
-	if !ok {
-		return "", fmt.Errorf("key %q not in secret %q", key, name)
-	}
-	return string(v), nil
+	return system
 }
 
 func fatal(what string, err error) {
 	fmt.Fprintf(os.Stderr, "✖ %s: %v\n", what, err)
 	os.Exit(1)
+}
+
+// openMemory returns a persistence Store for the first memory the runtime can
+// use, or nil if none is configured/usable. The DSN is read from the Secret the
+// memory view points at (the Registry never serves the value itself).
+func openMemory(ctx context.Context, sec *secrets.Reader, mems []sdk.Memory) memory.Store {
+	for _, m := range mems {
+		if sec == nil || m.SecretName == "" {
+			continue
+		}
+		dsn, err := sec.Read(ctx, m.SecretName, m.SecretKey)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  memory %q: read connection secret: %v\n", m.Name, err)
+			continue
+		}
+		store, err := memory.Open(m.Backend, dsn, m.Namespace)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  memory %q: %v\n", m.Name, err)
+			continue
+		}
+		fmt.Printf("  memory: %s (backend=%s namespace=%s)\n", m.Name, m.Backend, m.Namespace)
+		return store
+	}
+	return nil
+}
+
+// newRetriever wraps the SDK retriever with the reference runtime's logging.
+func newRetriever(kbs []sdk.KnowledgeBase) *retriever.Retriever {
+	r := retriever.New(kbs, retriever.WithLogf(func(f string, a ...any) {
+		fmt.Fprintf(os.Stderr, "  "+f+"\n", a...)
+	}))
+	for _, kb := range kbs {
+		fmt.Printf("  knowledgeBase: %s (source=%s uri=%s)\n", kb.Name, kb.Source, kb.URI)
+	}
+	if len(kbs) > 0 && len(r.Unusable()) == len(kbs) {
+		fmt.Println("  (no http-source KnowledgeBase; retrieval not performed by the reference runtime)")
+	}
+	return r
 }
 
 func envOr(key, def string) string {
@@ -256,9 +226,22 @@ func envOr(key, def string) string {
 }
 
 // chatREPL runs an interactive multi-turn conversation with the agent over
-// stdin. History is retained across turns; tool calls happen transparently.
-func chatREPL(ctx context.Context, name string, base agentloop.Config) {
+// stdin. History is retained across turns; tool calls happen transparently. If
+// a memory store is configured, prior turns are restored on start and every
+// exchange is persisted.
+func chatREPL(ctx context.Context, name string, base agentloop.Config, store memory.Store, rag *retriever.Retriever) {
 	session := agentloop.NewSession(base)
+	const sessionID = "cli"
+	if store != nil {
+		if turns, err := store.Load(ctx, sessionID); err == nil {
+			for _, t := range turns {
+				session.AppendHistory(t.Role, t.Content)
+			}
+			if len(turns) > 0 {
+				fmt.Printf("(restored %d turns from memory)\n", len(turns))
+			}
+		}
+	}
 	fmt.Printf("\n💬 Chatting with agent %q. Type your message; 'exit' or Ctrl-D to quit.\n\n", name)
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -273,11 +256,16 @@ func chatREPL(ctx context.Context, name string, base agentloop.Config) {
 			fmt.Println("bye")
 			return
 		}
-		answer, err := session.Send(ctx, line)
+		answer, err := session.Send(ctx, rag.Augment(ctx, line))
 		if err != nil {
 			fmt.Printf("✖ %v\n", err)
 		} else {
 			fmt.Printf("agent> %s\n", answer)
+			if store != nil {
+				_ = store.Append(ctx, sessionID,
+					memory.Turn{Role: "user", Content: line},
+					memory.Turn{Role: "assistant", Content: answer})
+			}
 		}
 		fmt.Print("\nyou> ")
 	}
@@ -286,15 +274,24 @@ func chatREPL(ctx context.Context, name string, base agentloop.Config) {
 
 // serveHTTP runs the web mode: a browser chat UI plus a small JSON API. Each
 // browser session (by X-Session id) gets its own multi-turn agentloop.Session.
-func serveHTTP(ctx context.Context, name string, cfg *registryConfig, base agentloop.Config, addr string) {
+// If a memory store is configured, a session's history is restored on first use
+// and every exchange is persisted under its session id.
+func serveHTTP(ctx context.Context, name string, cfg *sdk.AgentConfig, base agentloop.Config, addr string, store memory.Store, rag *retriever.Retriever) {
 	var mu sync.Mutex
 	sessions := map[string]*agentloop.Session{}
-	getSession := func(id string) *agentloop.Session {
+	getSession := func(reqCtx context.Context, id string) *agentloop.Session {
 		mu.Lock()
 		defer mu.Unlock()
 		s, ok := sessions[id]
 		if !ok {
 			s = agentloop.NewSession(base)
+			if store != nil {
+				if turns, err := store.Load(reqCtx, id); err == nil {
+					for _, t := range turns {
+						s.AppendHistory(t.Role, t.Content)
+					}
+				}
+			}
 			sessions[id] = s
 		}
 		return s
@@ -334,10 +331,15 @@ func serveHTTP(ctx context.Context, name string, cfg *registryConfig, base agent
 		if req.SessionID == "" {
 			req.SessionID = "default"
 		}
-		answer, err := getSession(req.SessionID).Send(r.Context(), req.Message)
+		answer, err := getSession(r.Context(), req.SessionID).Send(r.Context(), rag.Augment(r.Context(), req.Message))
 		if err != nil {
 			writeJSON(w, map[string]any{"error": err.Error()})
 			return
+		}
+		if store != nil {
+			_ = store.Append(r.Context(), req.SessionID,
+				memory.Turn{Role: "user", Content: req.Message},
+				memory.Turn{Role: "assistant", Content: answer})
 		}
 		writeJSON(w, map[string]any{"answer": answer})
 	})
@@ -402,72 +404,34 @@ f.onsubmit=async e=>{
 </script>
 </body></html>`
 
-// watchLoop is the long-running data-plane mode: subscribe to the Registry's
-// SSE /watch stream and hot-reload on every config change. It never exits (it
-// is the pod's main process); on disconnect it reconnects with backoff. Each
-// event is a full snapshot keyed by configHash — the runtime applies only when
-// the hash actually changes.
-func watchLoop(ctx context.Context, registry, ns, name string) {
+// watchLoop is the long-running data-plane mode: the SDK client subscribes to
+// the Registry's SSE /watch stream (reconnecting with backoff, deduping on
+// configHash) and this loop applies every effective change. It never exits —
+// it is the pod's main process.
+func watchLoop(ctx context.Context, rc *sdk.Client, ns, name string) {
 	// The runtime reads the model key from the referenced Secret via its own
 	// RBAC — the Registry only hands out Secret coordinates, never values.
-	var k client.Client
-	if kcfg, err := ctrl.GetConfig(); err == nil {
-		k, _ = client.New(kcfg, client.Options{Scheme: scheme})
-	}
-
-	fmt.Printf("▶ agent-runtime watching %s for %s/%s\n", registry, ns, name)
-	url := fmt.Sprintf("%s/v1/agents/%s/%s/watch", registry, ns, name)
-	lastHash := "<none>"
-	for {
-		if err := streamOnce(ctx, k, url, ns, &lastHash); err != nil {
-			fmt.Printf("  stream ended (%v); reconnecting in 2s\n", err)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(2 * time.Second):
-		}
-	}
-}
-
-func streamOnce(ctx context.Context, k client.Client, url, ns string, lastHash *string) error {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	resp, err := http.DefaultClient.Do(req)
+	sec, err := secrets.NewReader(ns)
 	if err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "  no kubernetes access (%v); hot-reload will skip Secret reads\n", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
 
-	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 1024*1024), 1024*1024) // configs can be large
-	for sc.Scan() {
-		line := sc.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue // keepalive comments / blank lines
-		}
-		var cfg registryConfig
-		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &cfg); err != nil {
-			continue
-		}
-		if cfg.ConfigHash == *lastHash {
-			continue // no change (also filters repeats)
-		}
-		*lastHash = cfg.ConfigHash
-		applyConfig(ctx, k, ns, &cfg)
-	}
-	return sc.Err()
+	fmt.Printf("▶ agent-runtime watching the Registry for %s/%s\n", ns, name)
+	_ = rc.Watch(ctx, ns, name, func(cfg *sdk.AgentConfig) {
+		applyConfig(ctx, sec, cfg)
+	})
 }
 
 // applyConfig is where a real runtime would atomically swap its in-memory
 // model client + tool table. Here it logs what it received, proving the pull +
 // hot-reload path end to end.
-func applyConfig(ctx context.Context, k client.Client, ns string, cfg *registryConfig) {
+func applyConfig(ctx context.Context, sec *secrets.Reader, cfg *sdk.AgentConfig) {
 	keyLen := 0
 	model := "<none>"
 	if cfg.Model != nil {
 		model = cfg.Model.Provider + "/" + cfg.Model.ModelName
-		if k != nil && cfg.Model.SecretName != "" {
-			if v, err := readSecretKey(ctx, k, ns, cfg.Model.SecretName, cfg.Model.SecretKey); err == nil {
+		if sec != nil && cfg.Model.SecretName != "" {
+			if v, err := sec.Read(ctx, cfg.Model.SecretName, cfg.Model.SecretKey); err == nil {
 				keyLen = len(v)
 			}
 		}
@@ -476,6 +440,14 @@ func applyConfig(ctx context.Context, k client.Client, ns string, cfg *registryC
 	for _, t := range cfg.Tools {
 		toolNames = append(toolNames, fmt.Sprintf("%s(%s)", t.Name, t.Type))
 	}
-	fmt.Printf("↻ hot-reload: phase=%s hash=%.12s model=%s keyLen=%d tools=%v skills=%v\n",
-		cfg.Phase, cfg.ConfigHash, model, keyLen, toolNames, cfg.Skills)
+	skillNames := make([]string, 0, len(cfg.Skills))
+	for _, sk := range cfg.Skills {
+		skillNames = append(skillNames, sk.Name)
+	}
+	memNames := make([]string, 0, len(cfg.Memories))
+	for _, m := range cfg.Memories {
+		memNames = append(memNames, fmt.Sprintf("%s(%s)", m.Name, m.Backend))
+	}
+	fmt.Printf("↻ hot-reload: phase=%s hash=%.12s model=%s keyLen=%d tools=%v skills=%v memories=%v\n",
+		cfg.Phase, cfg.ConfigHash, model, keyLen, toolNames, skillNames, memNames)
 }

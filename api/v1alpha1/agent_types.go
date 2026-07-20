@@ -35,10 +35,11 @@ type AgentSpec struct {
 	// +optional
 	AgentClassRef *LocalReference `json:"agentClassRef,omitempty"`
 
-	// modelRef references the Model this agent uses. Required: an agent without
-	// a model cannot be assembled into a runnable configuration.
-	// +required
-	ModelRef LocalReference `json:"modelRef"`
+	// modelRef references the Model this agent uses. Optional at the API level so
+	// it may be inherited from an AgentClass's defaultModelRef; an Agent with no
+	// effective model (neither here nor via its class) is marked Degraded.
+	// +optional
+	ModelRef *LocalReference `json:"modelRef,omitempty"`
 
 	// workflowRef references the Workflow describing the agent's execution
 	// shape (e.g. planner/tool/reflect/finish). Optional when inherited from an
@@ -75,12 +76,41 @@ type AgentSpec struct {
 	// +listType=atomic
 	PolicyRefs []LocalReference `json:"policyRefs,omitempty"`
 
+	// knowledgeBaseRefs lists KnowledgeBases the agent may retrieve from (RAG).
+	// +optional
+	// +listType=atomic
+	KnowledgeBaseRefs []LocalReference `json:"knowledgeBaseRefs,omitempty"`
+
 	// runtime, when set, tells the Operator to materialize an in-cluster agent
 	// runtime Deployment for this Agent (pull model: the container reads its
 	// config from the Registry). Omit to keep Agent Plane purely declarative and
 	// bring your own runtime.
 	// +optional
 	Runtime *AgentRuntimeSpec `json:"runtime,omitempty"`
+}
+
+// ApplyClassDefaults returns a copy of spec with unset optional references
+// filled from the referenced AgentClass. Agent-level values always win; class
+// defaults only fill gaps. It is the single source of the effective spec, used
+// by both the Operator (resolution + hash) and the Registry (data-plane config)
+// so the two never diverge. class may be nil (returns spec unchanged).
+func ApplyClassDefaults(spec AgentSpec, class *AgentClass) AgentSpec {
+	if class == nil {
+		return spec
+	}
+	if spec.ModelRef == nil && class.Spec.DefaultModelRef != nil {
+		spec.ModelRef = class.Spec.DefaultModelRef
+	}
+	if spec.WorkflowRef == nil && class.Spec.DefaultWorkflowRef != nil {
+		spec.WorkflowRef = class.Spec.DefaultWorkflowRef
+	}
+	if spec.PromptRef == nil && class.Spec.DefaultPromptRef != nil {
+		spec.PromptRef = class.Spec.DefaultPromptRef
+	}
+	if len(spec.PolicyRefs) == 0 && len(class.Spec.DefaultPolicyRefs) > 0 {
+		spec.PolicyRefs = class.Spec.DefaultPolicyRefs
+	}
+	return spec
 }
 
 // AgentRuntimeSpec describes an operator-managed runtime workload for an Agent.

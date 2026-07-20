@@ -1,5 +1,7 @@
 # Build image for the agent runtime (verification fixture). Defaults to the
-# long-running --watch mode used by operator-materialized runtime pods.
+# long-running --watch mode used by operator-materialized runtime pods. Built
+# on the runtime SDK (github.com/hkmdxlftjf/agent-plane-sdk-go) — no Agent
+# Plane control-plane packages are compiled in.
 FROM golang:1.26 AS builder
 ARG TARGETARCH
 WORKDIR /workspace

@@ -121,24 +121,24 @@ curl -N localhost:9090/v1/agents/default/support-agent/watch
 > In-cluster they require cert-manager (uncomment the `webhook`/`cert-manager`
 > entries in `config/default/kustomization.yaml`).
 
-## Demo: a real agent driven by Agent Plane
+## Reference runtime: a real agent driven by Agent Plane
 
-`config/demo/` + `hack/demo.sh` stand up a complete Agent — Model + PromptTemplate
-+ an MCP **Tool** (backed by an `MCPServer` the operator materializes) + a
-markdown **Skill** — and then run `cmd/agent-runtime`, a minimal *real* agent
-that:
+`cmd/agent-runtime` is a minimal *real* agent that stands in for a full Agent
+framework, built on the Go SDK
+([`github.com/hkmdxlftjf/agent-plane-sdk-go`](https://github.com/hkmdxlftjf/agent-plane-sdk-go)).
+Point it at a deployed Agent and it:
 
 1. pulls the resolved config from the **Registry** (never the API server),
 2. reads the model API key from the referenced **Secret** via its own RBAC,
-3. reads the system prompt from the **PromptTemplate**, and
+3. takes the Registry-resolved **PromptTemplate** system prompt and folds in any **Skill**
+   content, restores conversation **Memory**, and retrieves from **KnowledgeBases**, and
 4. runs a **tool-calling loop**: the model requests a tool, the runtime invokes
-   it over **MCP JSON-RPC**, feeds the result back, and returns the answer.
+   it over **MCP JSON-RPC** (or plain HTTP), feeds the result back, and returns
+   the answer.
 
 ```sh
-# operator must be deployed first (make deploy / config/local); needs an LLM key:
-#   ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN  (OpenAI-compatible gateway), or
-#   OPENROUTER_API_KEY
-bash hack/demo.sh "What is the status of order A-42?"
+# operator + in-cluster Registry deployed first; needs an LLM key in the Model's Secret.
+go run ./cmd/agent-runtime --namespace <ns> --name <agent> --prompt "What is the status of order A-42?"
 ```
 
 Sample output:
@@ -152,7 +152,9 @@ Order A-42 is shipped via UPS with an ETA of July 20, 2026.
 
 `agent-runtime` and `example-mcp` are **test fixtures**, not part of the control
 plane — they stand in for a real Agent framework and a real MCP tool server to
-prove the platform drives them end-to-end.
+prove the platform drives them end-to-end. See
+**[docs/quickstart-custom-agent.md](docs/quickstart-custom-agent.md)** for a full
+walkthrough of declaring, implementing, and deploying your own agent.
 
 ## Operator-managed runtime (`spec.runtime`)
 
@@ -180,8 +182,10 @@ in `config/registry/`. See **[docs/usage.md](docs/usage.md)** §8 and
 
 ## Documentation
 
+- **[docs/quickstart-custom-agent.md](docs/quickstart-custom-agent.md)** — zero-to-running
+  guide: declare a custom agent, implement its runtime code, and deploy it.
 - **[docs/usage.md](docs/usage.md)** — full usage guide (deploy, declarative &
-  programmatic usage, data plane, runtime, demo, FAQ).
+  programmatic usage, data plane, runtime, FAQ).
 - **[docs/runtime-protocol.md](docs/runtime-protocol.md)** — the runtime
   configuration & change-notification protocol (v1).
 

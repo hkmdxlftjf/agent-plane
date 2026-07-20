@@ -41,6 +41,7 @@ import (
 
 	toolscache "k8s.io/client-go/tools/cache"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -48,6 +49,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+
+	sdk "github.com/hkmdxlftjf/agent-plane-sdk-go"
 
 	corev1alpha1 "github.com/hkmdxlftjf/agent-plane/api/v1alpha1"
 )
@@ -59,41 +62,9 @@ func init() {
 	utilruntime.Must(corev1alpha1.AddToScheme(scheme))
 }
 
-// agentConfig is the payload runtimes consume. It mirrors the Agent spec plus
-// the Operator-computed status hash, so a runtime can cheaply detect drift by
-// comparing configHash.
-type agentConfig struct {
-	Namespace  string                 `json:"namespace"`
-	Name       string                 `json:"name"`
-	ConfigHash string                 `json:"configHash"`
-	Phase      string                 `json:"phase"`
-	Spec       corev1alpha1.AgentSpec `json:"spec"`
-	Model      *modelView             `json:"model,omitempty"`
-	Tools      []toolView             `json:"tools,omitempty"`
-	Skills     []string               `json:"skills,omitempty"`
-}
-
-type modelView struct {
-	Provider  string `json:"provider"`
-	ModelName string `json:"modelName"`
-	Endpoint  string `json:"endpoint,omitempty"`
-	// SecretName/SecretKey tell the runtime where to read the API key. The
-	// Registry never serves the secret value itself — the runtime reads the
-	// Secret through its own Kubernetes RBAC.
-	SecretName string `json:"secretName,omitempty"`
-	SecretKey  string `json:"secretKey,omitempty"`
-}
-
-// toolView is a fully resolved tool definition a runtime can act on without
-// reading the Tool/MCPServer CRs itself.
-type toolView struct {
-	Name        string          `json:"name"`
-	Type        string          `json:"type"`
-	Description string          `json:"description,omitempty"`
-	Endpoint    string          `json:"endpoint,omitempty"`
-	MCPToolName string          `json:"mcpToolName,omitempty"`
-	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
-}
+// The payload runtimes consume is sdk.AgentConfig — the wire contract lives in
+// the SDK (github.com/hkmdxlftjf/agent-plane-sdk-go) so the server and every
+// runtime compile against the same types and cannot drift.
 
 func main() {
 	var addr string
@@ -271,63 +242,134 @@ func (s *server) onAgentChange(ctx context.Context, obj interface{}) {
 }
 
 // buildConfig loads the Agent by name and resolves its config.
-func (s *server) buildConfig(ctx context.Context, ns, name string) (agentConfig, error) {
+func (s *server) buildConfig(ctx context.Context, ns, name string) (sdk.AgentConfig, error) {
 	var agent corev1alpha1.Agent
 	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &agent); err != nil {
-		return agentConfig{}, err
+		return sdk.AgentConfig{}, err
 	}
 	return s.buildConfigFrom(ctx, &agent)
 }
 
 // buildConfigFrom resolves the config for an already-loaded Agent, enriching it
 // with the referenced Model so runtimes avoid a second round-trip.
-func (s *server) buildConfigFrom(ctx context.Context, agent *corev1alpha1.Agent) (agentConfig, error) {
-	out := agentConfig{
+func (s *server) buildConfigFrom(ctx context.Context, agent *corev1alpha1.Agent) (sdk.AgentConfig, error) {
+	// Apply AgentClass defaults so the shipped spec is the *effective* one — the
+	// runtime sees the same defaulted refs the Operator resolved and hashed.
+	var class *corev1alpha1.AgentClass
+	if agent.Spec.AgentClassRef != nil {
+		var c corev1alpha1.AgentClass
+		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: agent.Spec.AgentClassRef.Name}, &c); err == nil {
+			class = &c
+		}
+	}
+	eff := corev1alpha1.ApplyClassDefaults(agent.Spec, class)
+
+	// Ship the effective spec as raw JSON for runtime introspection; everything
+	// actionable is resolved into the typed views below.
+	specJSON, err := json.Marshal(eff)
+	if err != nil {
+		return sdk.AgentConfig{}, fmt.Errorf("marshal effective spec: %w", err)
+	}
+
+	out := sdk.AgentConfig{
 		Namespace:  agent.Namespace,
 		Name:       agent.Name,
 		ConfigHash: agent.Status.ResolvedConfigHash,
 		Phase:      string(agent.Status.Phase),
-		Spec:       agent.Spec,
+		Spec:       specJSON,
 	}
-	var model corev1alpha1.Model
-	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: agent.Spec.ModelRef.Name}, &model); err == nil {
-		mv := &modelView{
-			Provider:  string(model.Spec.Provider),
-			ModelName: model.Spec.ModelName,
-			Endpoint:  model.Spec.Endpoint,
+	// Resolve the system prompt server-side so runtimes need no access to
+	// PromptTemplate CRs (they keep RBAC for Secrets only).
+	if eff.PromptRef != nil {
+		var pt corev1alpha1.PromptTemplate
+		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: eff.PromptRef.Name}, &pt); err == nil {
+			out.Prompt = &sdk.Prompt{Name: pt.Name, System: pt.Spec.System}
+		} else {
+			s.log.Error(err, "resolve promptTemplate", "promptTemplate", eff.PromptRef.Name)
 		}
-		// Resolve the credential to its Secret coordinates (not the value).
-		if model.Spec.CredentialRef != nil {
-			var cred corev1alpha1.Credential
-			if err := s.reader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: model.Spec.CredentialRef.Name}, &cred); err == nil {
-				mv.SecretName = cred.Spec.SecretRef.Name
-				mv.SecretKey = cred.Spec.SecretRef.Key
+	}
+	if eff.ModelRef != nil {
+		var model corev1alpha1.Model
+		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: eff.ModelRef.Name}, &model); err == nil {
+			mv := &sdk.Model{
+				Provider:  string(model.Spec.Provider),
+				ModelName: model.Spec.ModelName,
+				Endpoint:  model.Spec.Endpoint,
 			}
+			// Resolve the credential to its Secret coordinates (not the value).
+			if model.Spec.CredentialRef != nil {
+				var cred corev1alpha1.Credential
+				if err := s.reader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: model.Spec.CredentialRef.Name}, &cred); err == nil {
+					mv.SecretName = cred.Spec.SecretRef.Name
+					mv.SecretKey = cred.Spec.SecretRef.Key
+				}
+			}
+			out.Model = mv
 		}
-		out.Model = mv
 	}
-	for _, ref := range agent.Spec.ToolRefs {
-		tv, err := s.resolveTool(ctx, agent.Namespace, ref.Name)
-		if err != nil {
-			s.log.Error(err, "resolve tool", "tool", ref.Name)
-			continue
+	// Resolve tools from direct toolRefs AND expand toolSetRefs into their
+	// member tools, deduping by name so a tool referenced both ways appears once.
+	seenTool := map[string]bool{}
+	addTool := func(name string) {
+		if seenTool[name] {
+			return
 		}
+		tv, err := s.resolveTool(ctx, agent.Namespace, name)
+		if err != nil {
+			s.log.Error(err, "resolve tool", "tool", name)
+			return
+		}
+		seenTool[name] = true
 		out.Tools = append(out.Tools, tv)
 	}
-	for _, ref := range agent.Spec.SkillRefs {
-		out.Skills = append(out.Skills, ref.Name)
+	for _, ref := range eff.ToolRefs {
+		addTool(ref.Name)
+	}
+	for _, ref := range eff.ToolSetRefs {
+		var ts corev1alpha1.ToolSet
+		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: ref.Name}, &ts); err != nil {
+			s.log.Error(err, "resolve toolset", "toolset", ref.Name)
+			continue
+		}
+		for _, t := range ts.Spec.ToolRefs {
+			addTool(t.Name)
+		}
+	}
+	for _, ref := range eff.SkillRefs {
+		sv, err := s.resolveSkill(ctx, agent.Namespace, ref.Name)
+		if err != nil {
+			s.log.Error(err, "resolve skill", "skill", ref.Name)
+			continue
+		}
+		out.Skills = append(out.Skills, sv)
+	}
+	for _, ref := range eff.MemoryRefs {
+		mv, err := s.resolveMemory(ctx, agent.Namespace, ref.Name)
+		if err != nil {
+			s.log.Error(err, "resolve memory", "memory", ref.Name)
+			continue
+		}
+		out.Memories = append(out.Memories, mv)
+	}
+	for _, ref := range eff.KnowledgeBaseRefs {
+		kv, err := s.resolveKnowledgeBase(ctx, agent.Namespace, ref.Name)
+		if err != nil {
+			s.log.Error(err, "resolve knowledgeBase", "knowledgeBase", ref.Name)
+			continue
+		}
+		out.Knowledge = append(out.Knowledge, kv)
 	}
 	return out, nil
 }
 
 // resolveTool turns a Tool reference into a fully-resolved definition. For mcp
 // tools it resolves the backing MCPServer's in-cluster endpoint from status.
-func (s *server) resolveTool(ctx context.Context, ns, name string) (toolView, error) {
+func (s *server) resolveTool(ctx context.Context, ns, name string) (sdk.Tool, error) {
 	var tool corev1alpha1.Tool
 	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &tool); err != nil {
-		return toolView{}, err
+		return sdk.Tool{}, err
 	}
-	tv := toolView{
+	tv := sdk.Tool{
 		Name:        tool.Name,
 		Type:        string(tool.Spec.Type),
 		Description: tool.Spec.Description,
@@ -346,7 +388,67 @@ func (s *server) resolveTool(ctx context.Context, ns, name string) (toolView, er
 	return tv, nil
 }
 
-func writeSSE(w io.Writer, cfg agentConfig) {
+// resolveSkill loads a Skill and returns its instruction content. Content comes
+// from the inline spec.content or, failing that, the referenced ConfigMap.
+func (s *server) resolveSkill(ctx context.Context, ns, name string) (sdk.Skill, error) {
+	var skill corev1alpha1.Skill
+	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &skill); err != nil {
+		return sdk.Skill{}, err
+	}
+	sv := sdk.Skill{Name: skill.Name, Description: skill.Spec.Description, Content: skill.Spec.Content}
+	if sv.Content == "" && skill.Spec.ContentConfigMapRef != nil {
+		ref := skill.Spec.ContentConfigMapRef
+		var cm corev1.ConfigMap
+		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: ref.Name}, &cm); err == nil {
+			sv.Content = cm.Data[ref.Key]
+		}
+	}
+	return sv, nil
+}
+
+// resolveMemory loads a Memory and returns its backend + the Secret coordinates
+// (never the value) of its connection Credential.
+func (s *server) resolveMemory(ctx context.Context, ns, name string) (sdk.Memory, error) {
+	var mem corev1alpha1.Memory
+	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &mem); err != nil {
+		return sdk.Memory{}, err
+	}
+	mv := sdk.Memory{Name: mem.Name, Backend: string(mem.Spec.Backend), Namespace: mem.Spec.Namespace}
+	if mem.Spec.ConnectionRef != nil {
+		var cred corev1alpha1.Credential
+		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: mem.Spec.ConnectionRef.Name}, &cred); err == nil {
+			mv.SecretName = cred.Spec.SecretRef.Name
+			mv.SecretKey = cred.Spec.SecretRef.Key
+		}
+	}
+	return mv, nil
+}
+
+// resolveKnowledgeBase loads a KnowledgeBase and returns its source coordinates,
+// resolving the embedding Model name and access-credential Secret coordinates.
+func (s *server) resolveKnowledgeBase(ctx context.Context, ns, name string) (sdk.KnowledgeBase, error) {
+	var kb corev1alpha1.KnowledgeBase
+	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &kb); err != nil {
+		return sdk.KnowledgeBase{}, err
+	}
+	kv := sdk.KnowledgeBase{Name: kb.Name, Source: string(kb.Spec.Source), URI: kb.Spec.URI}
+	if kb.Spec.EmbeddingModelRef != nil {
+		var model corev1alpha1.Model
+		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: kb.Spec.EmbeddingModelRef.Name}, &model); err == nil {
+			kv.EmbeddingModel = model.Spec.ModelName
+		}
+	}
+	if kb.Spec.CredentialRef != nil {
+		var cred corev1alpha1.Credential
+		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: kb.Spec.CredentialRef.Name}, &cred); err == nil {
+			kv.SecretName = cred.Spec.SecretRef.Name
+			kv.SecretKey = cred.Spec.SecretRef.Key
+		}
+	}
+	return kv, nil
+}
+
+func writeSSE(w io.Writer, cfg sdk.AgentConfig) {
 	b, err := json.Marshal(cfg)
 	if err != nil {
 		return
@@ -361,7 +463,7 @@ type hub struct {
 }
 
 type subscriber struct {
-	ch chan agentConfig
+	ch chan sdk.AgentConfig
 }
 
 func newHub() *hub {
@@ -369,7 +471,7 @@ func newHub() *hub {
 }
 
 func (h *hub) subscribe(key string) *subscriber {
-	sub := &subscriber{ch: make(chan agentConfig, 8)}
+	sub := &subscriber{ch: make(chan sdk.AgentConfig, 8)}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.subs[key] == nil {
@@ -394,7 +496,7 @@ func (h *hub) unsubscribe(key string, sub *subscriber) {
 // broadcast delivers cfg to every subscriber of key. Sends are non-blocking:
 // a slow consumer drops intermediate updates but always converges, since each
 // event carries the full current config (not a delta).
-func (h *hub) broadcast(key string, cfg agentConfig) {
+func (h *hub) broadcast(key string, cfg sdk.AgentConfig) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for sub := range h.subs[key] {
