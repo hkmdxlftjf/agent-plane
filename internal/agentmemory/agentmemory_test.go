@@ -72,22 +72,22 @@ func (f *fakeRedis) handle(conn net.Conn) {
 		}
 		switch strings.ToUpper(args[0]) {
 		case "AUTH", "SELECT":
-			fmt.Fprint(conn, "+OK\r\n")
+			_, _ = fmt.Fprint(conn, "+OK\r\n")
 		case "RPUSH":
 			key := args[1]
 			f.lists[key] = append(f.lists[key], args[2:]...)
-			fmt.Fprintf(conn, ":%d\r\n", len(f.lists[key]))
+			_, _ = fmt.Fprintf(conn, ":%d\r\n", len(f.lists[key]))
 		case "LTRIM":
-			fmt.Fprint(conn, "+OK\r\n")
+			_, _ = fmt.Fprint(conn, "+OK\r\n")
 		case "LRANGE":
 			key := args[1]
 			items := f.lists[key]
-			fmt.Fprintf(conn, "*%d\r\n", len(items))
+			_, _ = fmt.Fprintf(conn, "*%d\r\n", len(items))
 			for _, it := range items {
-				fmt.Fprintf(conn, "$%d\r\n%s\r\n", len(it), it)
+				_, _ = fmt.Fprintf(conn, "$%d\r\n%s\r\n", len(it), it)
 			}
 		default:
-			fmt.Fprint(conn, "-ERR unknown command\r\n")
+			_, _ = fmt.Fprint(conn, "-ERR unknown command\r\n")
 		}
 	}
 }
@@ -118,7 +118,7 @@ func readCommand(r *bufio.Reader) ([]string, error) {
 			return nil, err
 		}
 		buf := make([]byte, length+2)
-		if _, err := readFull(r, buf); err != nil {
+		if err := readFull(r, buf); err != nil {
 			return nil, err
 		}
 		args = append(args, string(buf[:length]))

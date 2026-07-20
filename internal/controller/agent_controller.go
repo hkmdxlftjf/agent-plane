@@ -130,7 +130,7 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 		name string
 		obj  client.Object
 	}
-	var targets []target
+	targets := make([]target, 0, 12)
 
 	// Resolve the AgentClass first so its defaults can fill unset Agent refs.
 	// The class itself is also a resolved reference (so its changes bump the hash).
@@ -290,7 +290,7 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 		dep.Labels = labels
 		dep.Spec.Replicas = &replicas
 		dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
-		dep.Spec.Template.ObjectMeta.Labels = labels
+		dep.Spec.Template.Labels = labels
 		env := append([]corev1.EnvVar{
 			{Name: "AGENTPLANE_REGISTRY", Value: registryURL},
 			{Name: "AGENTPLANE_AGENT_NAMESPACE", Value: agent.Namespace},

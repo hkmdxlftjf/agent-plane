@@ -50,7 +50,7 @@ func (r *AgentClassReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	var targets []refTarget
+	targets := make([]refTarget, 0, 4)
 	if class.Spec.DefaultModelRef != nil {
 		targets = append(targets, refTarget{"Model", class.Spec.DefaultModelRef.Name, &corev1alpha1.Model{}})
 	}

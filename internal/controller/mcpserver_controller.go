@@ -114,7 +114,7 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcp *core
 		dep.Labels = labels
 		dep.Spec.Replicas = &replicas
 		dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
-		dep.Spec.Template.ObjectMeta.Labels = labels
+		dep.Spec.Template.Labels = labels
 		dep.Spec.Template.Spec.Containers = []corev1.Container{{
 			Name:      "mcp",
 			Image:     mcp.Spec.Image,

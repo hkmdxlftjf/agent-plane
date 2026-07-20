@@ -278,7 +278,7 @@ func (c *respConn) readBulk(hdr string) (*string, error) {
 		return nil, nil // nil bulk
 	}
 	buf := make([]byte, n+2) // include trailing CRLF
-	if _, err := readFull(c.r, buf); err != nil {
+	if err := readFull(c.r, buf); err != nil {
 		return nil, err
 	}
 	s := string(buf[:n])
@@ -293,14 +293,14 @@ func (c *respConn) readLine() (string, error) {
 	return strings.TrimRight(line, "\r\n"), nil
 }
 
-func readFull(r *bufio.Reader, buf []byte) (int, error) {
+func readFull(r *bufio.Reader, buf []byte) error {
 	total := 0
 	for total < len(buf) {
 		n, err := r.Read(buf[total:])
 		total += n
 		if err != nil {
-			return total, err
+			return err
 		}
 	}
-	return total, nil
+	return nil
 }
