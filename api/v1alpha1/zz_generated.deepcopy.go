@@ -257,7 +257,11 @@ func (in *AgentSpec) DeepCopyInto(out *AgentSpec) {
 		*out = new(LocalReference)
 		**out = **in
 	}
-	out.ModelRef = in.ModelRef
+	if in.ModelRef != nil {
+		in, out := &in.ModelRef, &out.ModelRef
+		*out = new(LocalReference)
+		**out = **in
+	}
 	if in.WorkflowRef != nil {
 		in, out := &in.WorkflowRef, &out.WorkflowRef
 		*out = new(LocalReference)
@@ -290,6 +294,11 @@ func (in *AgentSpec) DeepCopyInto(out *AgentSpec) {
 	}
 	if in.PolicyRefs != nil {
 		in, out := &in.PolicyRefs, &out.PolicyRefs
+		*out = make([]LocalReference, len(*in))
+		copy(*out, *in)
+	}
+	if in.KnowledgeBaseRefs != nil {
+		in, out := &in.KnowledgeBaseRefs, &out.KnowledgeBaseRefs
 		*out = make([]LocalReference, len(*in))
 		copy(*out, *in)
 	}

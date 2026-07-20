@@ -50,19 +50,19 @@ var _ = Describe("Agent Webhook", func() {
 		ctx := context.Background()
 
 		It("admits an agent with distinct references", func() {
-			obj.Spec.ModelRef = corev1alpha1.LocalReference{Name: "m"}
+			obj.Spec.ModelRef = &corev1alpha1.LocalReference{Name: "m"}
 			obj.Spec.ToolRefs = []corev1alpha1.LocalReference{{Name: "a"}, {Name: "b"}}
 			Expect(validator.ValidateCreate(ctx, obj)).Error().NotTo(HaveOccurred())
 		})
 
 		It("denies an agent with a duplicated toolRef", func() {
-			obj.Spec.ModelRef = corev1alpha1.LocalReference{Name: "m"}
+			obj.Spec.ModelRef = &corev1alpha1.LocalReference{Name: "m"}
 			obj.Spec.ToolRefs = []corev1alpha1.LocalReference{{Name: "a"}, {Name: "a"}}
 			Expect(validator.ValidateCreate(ctx, obj)).Error().To(HaveOccurred())
 		})
 
 		It("denies an agent with a duplicated policyRef on update", func() {
-			obj.Spec.ModelRef = corev1alpha1.LocalReference{Name: "m"}
+			obj.Spec.ModelRef = &corev1alpha1.LocalReference{Name: "m"}
 			obj.Spec.PolicyRefs = []corev1alpha1.LocalReference{{Name: "p"}, {Name: "p"}}
 			Expect(validator.ValidateUpdate(ctx, oldObj, obj)).Error().To(HaveOccurred())
 		})

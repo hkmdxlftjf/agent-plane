@@ -97,6 +97,13 @@ func NewSession(c Config) *Session {
 	}
 }
 
+// AppendHistory seeds a prior conversation turn into the session before any
+// Send, restoring persisted memory. role is "user" or "assistant". Call it
+// after NewSession and before the first Send.
+func (s *Session) AppendHistory(role, content string) {
+	s.messages = append(s.messages, oaMessage{Role: role, Content: content})
+}
+
 // Send appends a user message, runs the tool-calling loop, and returns the
 // model's final answer. Conversation history is retained across calls.
 func (s *Session) Send(ctx context.Context, userText string) (string, error) {

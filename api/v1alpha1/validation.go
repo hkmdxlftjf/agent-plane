@@ -92,6 +92,9 @@ func (s *AgentSpec) Validate() error {
 	if dup := firstDuplicate(refNames(s.PolicyRefs)); dup != "" {
 		return fmt.Errorf("duplicate policyRef %q", dup)
 	}
+	if dup := firstDuplicate(refNames(s.KnowledgeBaseRefs)); dup != "" {
+		return fmt.Errorf("duplicate knowledgeBaseRef %q", dup)
+	}
 	return nil
 }
 

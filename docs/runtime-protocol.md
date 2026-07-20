@@ -74,7 +74,7 @@ Reference implementation: `cmd/registry/` (server), `cmd/agent-runtime/` +
   },
 
   "tools": [                         // fully-resolved, directly invocable
-    {
+    {                                //   (from toolRefs AND expanded toolSetRefs, deduped)
       "name":        "order-lookup",
       "type":        "mcp",          // http | mcp | …
       "description": "Look up a customer order…",
@@ -84,14 +84,57 @@ Reference implementation: `cmd/registry/` (server), `cmd/agent-runtime/` +
     }
   ],
 
-  "skills": [ "refund-handling" ]    // markdown pack names (body fetched via K8s)
+  "skills": [                        // markdown instruction packs, content resolved
+    {                                //   from Skill.spec.content or its ConfigMap
+      "name":        "refund-handling",
+      "description": "How to process refunds",
+      "content":     "# Refund policy\n…"    // runtime folds this into the system prompt
+    }
+  ],
+
+  "memories": [                      // persistence backends the Agent may use
+    {
+      "name":       "session-memory",
+      "backend":    "redis",         // redis | postgres | vector | graph | s3
+      "namespace":  "support-sessions",  // key prefix / collection scope
+      "secretName": "redis-secret",  // ← coordinates only; DSN value NOT in payload
+      "secretKey":  "dsn"            //    the runtime reads the Secret itself
+    }
+  ],
+
+  "knowledgeBases": [                // corpora the Agent may retrieve from (RAG)
+    {
+      "name":           "support-docs",
+      "source":         "http",      // http | s3 | git | vector
+      "uri":            "http://retriever.default.svc/search",
+      "embeddingModel": "text-embedding-3-small",  // resolved from embeddingModelRef
+      "secretName":     "kb-secret", // ← coordinates only, as above
+      "secretKey":      "token"
+    }
+  ]
 }
 ```
 
 Conventions:
+- `spec` is the **effective** spec: the Agent's own spec with any unset optional
+  references (`modelRef`, `workflowRef`, `promptRef`, `policyRefs`) filled in from
+  its `agentClassRef` AgentClass defaults. Operator and Registry apply the same
+  merge (`AgentSpec.ApplyClassDefaults`) so what you see is what was hashed.
 - When not Ready, `model` may be absent and `configHash` is `""`.
+- `tools[]` is the union of the Agent's `toolRefs` and the tools of every
+  `toolSetRefs` member, deduplicated by name.
 - `tools[].endpoint`: for `http` it's the tool's own URL; for `mcp` it's the
   backing MCPServer's in-cluster endpoint.
+- `skills[].content` is the resolved markdown body; the runtime concatenates it
+  into the system prompt. Empty when the Skill's ConfigMap/content is missing.
+- `memories[]` carries only backend + Secret coordinates. As with `model`, the
+  Registry never serves the connection value — the runtime reads the Secret and
+  connects itself. Only `redis` is implemented in the reference runtime today;
+  other backends are declared but return "unsupported".
+- `knowledgeBases[]` carries the corpus location + resolved embedding model +
+  Secret coordinates. The reference runtime retrieves from `http`-source KBs
+  (POST `{"query":…}` → context text prepended to the turn); other sources are
+  declared but retrieval is left to a real runtime.
 - Semantics are append-only across versions; clients must ignore unknown fields
   (forward compatible).
 

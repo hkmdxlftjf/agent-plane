@@ -24,6 +24,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -45,6 +46,7 @@ import (
 
 	"github.com/hkmdxlftjf/agent-plane/api/v1alpha1"
 	"github.com/hkmdxlftjf/agent-plane/internal/agentloop"
+	"github.com/hkmdxlftjf/agent-plane/internal/agentmemory"
 )
 
 var scheme = runtime.NewScheme()
@@ -63,13 +65,38 @@ type toolView struct {
 	InputSchema json.RawMessage `json:"inputSchema"`
 }
 
+type skillView struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Content     string `json:"content"`
+}
+
+type memoryView struct {
+	Name       string `json:"name"`
+	Backend    string `json:"backend"`
+	Namespace  string `json:"namespace"`
+	SecretName string `json:"secretName"`
+	SecretKey  string `json:"secretKey"`
+}
+
+type knowledgeBaseView struct {
+	Name           string `json:"name"`
+	Source         string `json:"source"`
+	URI            string `json:"uri"`
+	EmbeddingModel string `json:"embeddingModel"`
+	SecretName     string `json:"secretName"`
+	SecretKey      string `json:"secretKey"`
+}
+
 type registryConfig struct {
-	Namespace  string     `json:"namespace"`
-	Name       string     `json:"name"`
-	Phase      string     `json:"phase"`
-	ConfigHash string     `json:"configHash"`
-	Tools      []toolView `json:"tools"`
-	Skills     []string   `json:"skills"`
+	Namespace  string              `json:"namespace"`
+	Name       string              `json:"name"`
+	Phase      string              `json:"phase"`
+	ConfigHash string              `json:"configHash"`
+	Tools      []toolView          `json:"tools"`
+	Skills     []skillView         `json:"skills"`
+	Memories   []memoryView        `json:"memories"`
+	Knowledge  []knowledgeBaseView `json:"knowledgeBases"`
 	Model      *struct {
 		Provider   string `json:"provider"`
 		ModelName  string `json:"modelName"`
@@ -168,6 +195,23 @@ func main() {
 			system = pt.Spec.System
 		}
 	}
+	// Fold Skill instruction packs into the system prompt (order preserved).
+	for _, sk := range cfg.Skills {
+		if sk.Content != "" {
+			system += "\n\n# Skill: " + sk.Name + "\n" + sk.Content
+			fmt.Printf("  skill: %s (%d chars)\n", sk.Name, len(sk.Content))
+		}
+	}
+
+	// Open a persistent memory backend if the Agent references one. The runtime
+	// reads the connection DSN from the Secret itself (Registry serves only
+	// coordinates), mirroring how the model key is read.
+	store := openMemory(ctx, k, ns, cfg.Memories)
+
+	// Build a RAG retriever from any referenced KnowledgeBases. The reference
+	// runtime retrieves from http-source KBs only (see kbRetriever); other
+	// sources are declared but retrieval is left to a real runtime.
+	retriever := newRetriever(cfg.Knowledge)
 
 	endpoint := cfg.Model.Endpoint
 	if endpoint == "" && cfg.Model.Provider == "openrouter" {
@@ -190,18 +234,18 @@ func main() {
 
 	// Web mode: serve a browser chat UI + HTTP API.
 	if serveMode {
-		serveHTTP(ctx, name, cfg, base, serveAddr)
+		serveHTTP(ctx, name, cfg, base, serveAddr, store, retriever)
 		return
 	}
 
 	// Interactive chat: multi-turn REPL over stdin.
 	if chatMode {
-		chatREPL(ctx, name, base)
+		chatREPL(ctx, name, base, store, retriever)
 		return
 	}
 
 	fmt.Printf("\n▶ Running agent loop (prompt: %q)\n", prompt)
-	base.Prompt = prompt
+	base.Prompt = retriever.augment(ctx, prompt)
 	answer, err := agentloop.Run(ctx, base)
 	if err != nil {
 		fatal("agent loop", err)
@@ -248,6 +292,99 @@ func fatal(what string, err error) {
 	os.Exit(1)
 }
 
+// openMemory returns a persistence Store for the first memory the runtime can
+// use, or nil if none is configured/usable. The DSN is read from the Secret the
+// memoryView points at (the Registry never serves the value itself).
+func openMemory(ctx context.Context, k client.Client, ns string, mems []memoryView) agentmemory.Store {
+	for _, m := range mems {
+		if k == nil || m.SecretName == "" {
+			continue
+		}
+		dsn, err := readSecretKey(ctx, k, ns, m.SecretName, m.SecretKey)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  memory %q: read connection secret: %v\n", m.Name, err)
+			continue
+		}
+		store, err := agentmemory.Open(m.Backend, dsn, m.Namespace)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  memory %q: %v\n", m.Name, err)
+			continue
+		}
+		fmt.Printf("  memory: %s (backend=%s namespace=%s)\n", m.Name, m.Backend, m.Namespace)
+		return store
+	}
+	return nil
+}
+
+// kbRetriever augments a user query with context retrieved from KnowledgeBases.
+// The reference runtime implements retrieval for http-source KBs only: it POSTs
+// {"query": …} to the KB's URI and prepends the response text. Vector/s3/git
+// sources are surfaced in config but their retrieval is left to a real runtime.
+type kbRetriever struct {
+	kbs []knowledgeBaseView
+}
+
+func newRetriever(kbs []knowledgeBaseView) *kbRetriever {
+	usable := 0
+	for _, kb := range kbs {
+		if kb.Source == "http" && kb.URI != "" {
+			usable++
+		}
+		fmt.Printf("  knowledgeBase: %s (source=%s uri=%s)\n", kb.Name, kb.Source, kb.URI)
+	}
+	if len(kbs) > 0 && usable == 0 {
+		fmt.Println("  (no http-source KnowledgeBase; retrieval not performed by the reference runtime)")
+	}
+	return &kbRetriever{kbs: kbs}
+}
+
+// augment returns query with any retrieved context appended. On retrieval error
+// it degrades gracefully to the original query.
+func (r *kbRetriever) augment(ctx context.Context, query string) string {
+	if r == nil || len(r.kbs) == 0 {
+		return query
+	}
+	var chunks []string
+	for _, kb := range r.kbs {
+		if kb.Source != "http" || kb.URI == "" {
+			continue
+		}
+		txt, err := httpRetrieve(ctx, kb.URI, query)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  kb %q retrieve: %v\n", kb.Name, err)
+			continue
+		}
+		if strings.TrimSpace(txt) != "" {
+			chunks = append(chunks, "## "+kb.Name+"\n"+strings.TrimSpace(txt))
+		}
+	}
+	if len(chunks) == 0 {
+		return query
+	}
+	return query + "\n\n# Retrieved context\n" + strings.Join(chunks, "\n\n")
+}
+
+// httpRetrieve POSTs {"query": q} to a KnowledgeBase retrieval endpoint and
+// returns the response body as context text.
+func httpRetrieve(ctx context.Context, endpoint, q string) (string, error) {
+	body, _ := json.Marshal(map[string]string{"query": q})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("kb %d: %s", resp.StatusCode, b)
+	}
+	return string(b), nil
+}
+
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -256,9 +393,22 @@ func envOr(key, def string) string {
 }
 
 // chatREPL runs an interactive multi-turn conversation with the agent over
-// stdin. History is retained across turns; tool calls happen transparently.
-func chatREPL(ctx context.Context, name string, base agentloop.Config) {
+// stdin. History is retained across turns; tool calls happen transparently. If
+// a memory store is configured, prior turns are restored on start and every
+// exchange is persisted.
+func chatREPL(ctx context.Context, name string, base agentloop.Config, store agentmemory.Store, retriever *kbRetriever) {
 	session := agentloop.NewSession(base)
+	const sessionID = "cli"
+	if store != nil {
+		if turns, err := store.Load(ctx, sessionID); err == nil {
+			for _, t := range turns {
+				session.AppendHistory(t.Role, t.Content)
+			}
+			if len(turns) > 0 {
+				fmt.Printf("(restored %d turns from memory)\n", len(turns))
+			}
+		}
+	}
 	fmt.Printf("\n💬 Chatting with agent %q. Type your message; 'exit' or Ctrl-D to quit.\n\n", name)
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -273,11 +423,16 @@ func chatREPL(ctx context.Context, name string, base agentloop.Config) {
 			fmt.Println("bye")
 			return
 		}
-		answer, err := session.Send(ctx, line)
+		answer, err := session.Send(ctx, retriever.augment(ctx, line))
 		if err != nil {
 			fmt.Printf("✖ %v\n", err)
 		} else {
 			fmt.Printf("agent> %s\n", answer)
+			if store != nil {
+				_ = store.Append(ctx, sessionID,
+					agentmemory.Turn{Role: "user", Content: line},
+					agentmemory.Turn{Role: "assistant", Content: answer})
+			}
 		}
 		fmt.Print("\nyou> ")
 	}
@@ -286,15 +441,24 @@ func chatREPL(ctx context.Context, name string, base agentloop.Config) {
 
 // serveHTTP runs the web mode: a browser chat UI plus a small JSON API. Each
 // browser session (by X-Session id) gets its own multi-turn agentloop.Session.
-func serveHTTP(ctx context.Context, name string, cfg *registryConfig, base agentloop.Config, addr string) {
+// If a memory store is configured, a session's history is restored on first use
+// and every exchange is persisted under its session id.
+func serveHTTP(ctx context.Context, name string, cfg *registryConfig, base agentloop.Config, addr string, store agentmemory.Store, retriever *kbRetriever) {
 	var mu sync.Mutex
 	sessions := map[string]*agentloop.Session{}
-	getSession := func(id string) *agentloop.Session {
+	getSession := func(reqCtx context.Context, id string) *agentloop.Session {
 		mu.Lock()
 		defer mu.Unlock()
 		s, ok := sessions[id]
 		if !ok {
 			s = agentloop.NewSession(base)
+			if store != nil {
+				if turns, err := store.Load(reqCtx, id); err == nil {
+					for _, t := range turns {
+						s.AppendHistory(t.Role, t.Content)
+					}
+				}
+			}
 			sessions[id] = s
 		}
 		return s
@@ -334,10 +498,15 @@ func serveHTTP(ctx context.Context, name string, cfg *registryConfig, base agent
 		if req.SessionID == "" {
 			req.SessionID = "default"
 		}
-		answer, err := getSession(req.SessionID).Send(r.Context(), req.Message)
+		answer, err := getSession(r.Context(), req.SessionID).Send(r.Context(), retriever.augment(r.Context(), req.Message))
 		if err != nil {
 			writeJSON(w, map[string]any{"error": err.Error()})
 			return
+		}
+		if store != nil {
+			_ = store.Append(r.Context(), req.SessionID,
+				agentmemory.Turn{Role: "user", Content: req.Message},
+				agentmemory.Turn{Role: "assistant", Content: answer})
 		}
 		writeJSON(w, map[string]any{"answer": answer})
 	})
@@ -476,6 +645,14 @@ func applyConfig(ctx context.Context, k client.Client, ns string, cfg *registryC
 	for _, t := range cfg.Tools {
 		toolNames = append(toolNames, fmt.Sprintf("%s(%s)", t.Name, t.Type))
 	}
-	fmt.Printf("↻ hot-reload: phase=%s hash=%.12s model=%s keyLen=%d tools=%v skills=%v\n",
-		cfg.Phase, cfg.ConfigHash, model, keyLen, toolNames, cfg.Skills)
+	skillNames := make([]string, 0, len(cfg.Skills))
+	for _, sk := range cfg.Skills {
+		skillNames = append(skillNames, sk.Name)
+	}
+	memNames := make([]string, 0, len(cfg.Memories))
+	for _, m := range cfg.Memories {
+		memNames = append(memNames, fmt.Sprintf("%s(%s)", m.Name, m.Backend))
+	}
+	fmt.Printf("↻ hot-reload: phase=%s hash=%.12s model=%s keyLen=%d tools=%v skills=%v memories=%v\n",
+		cfg.Phase, cfg.ConfigHash, model, keyLen, toolNames, skillNames, memNames)
 }
