@@ -124,11 +124,13 @@ curl -N localhost:9090/v1/agents/default/support-agent/watch
 ## Reference runtime: a real agent driven by Agent Plane
 
 `cmd/agent-runtime` is a minimal *real* agent that stands in for a full Agent
-framework. Point it at a deployed Agent and it:
+framework, built on the Go SDK
+([`github.com/hkmdxlftjf/agent-plane-sdk-go`](https://github.com/hkmdxlftjf/agent-plane-sdk-go)).
+Point it at a deployed Agent and it:
 
 1. pulls the resolved config from the **Registry** (never the API server),
 2. reads the model API key from the referenced **Secret** via its own RBAC,
-3. reads the system prompt from the **PromptTemplate** and folds in any **Skill**
+3. takes the Registry-resolved **PromptTemplate** system prompt and folds in any **Skill**
    content, restores conversation **Memory**, and retrieves from **KnowledgeBases**, and
 4. runs a **tool-calling loop**: the model requests a tool, the runtime invokes
    it over **MCP JSON-RPC** (or plain HTTP), feeds the result back, and returns

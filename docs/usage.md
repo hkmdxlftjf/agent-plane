@@ -209,10 +209,11 @@ via its own RBAC. Full contract: `docs/runtime-protocol.md`.
 
 `cmd/agent-runtime` is a minimal but real runtime (stands in for LangGraph et al.):
 it pulls config from the Registry, reads the model key from the referenced Secret
-via RBAC, reads the system prompt from the PromptTemplate, then runs a
+via RBAC (the system prompt arrives already resolved in the config), then runs a
 **tool-calling loop** — `http` tools via POST, `mcp` tools via JSON-RPC
-`tools/call` — feeding results back until a final answer. The reusable loop is in
-`internal/agentloop/`.
+`tools/call` — feeding results back until a final answer. It is built entirely on
+the Go SDK, [`github.com/hkmdxlftjf/agent-plane-sdk-go`](https://github.com/hkmdxlftjf/agent-plane-sdk-go);
+the reusable loop is the SDK's `agentloop` package.
 
 ```sh
 make run-registry &
@@ -359,11 +360,9 @@ the value is read by the runtime via its own RBAC.
 api/v1alpha1/           # 14 CRD types + shared types + structural validation (validation.go)
 internal/controller/    # one reconciler per Kind; refutil.go = shared ref-resolution/watch helpers
 internal/webhook/       # validating admission webhooks (Agent/Workflow/Tool)
-internal/agentloop/     # reusable tool-calling loop (verification, not control plane)
-internal/agentmemory/   # zero-dependency Redis conversation store (verification, not control plane)
 cmd/main.go             # Operator (manager)
-cmd/registry/           # Registry (data-plane config endpoint: /config, /watch)
-cmd/agent-runtime/      # reference runtime (Registry-driven; one-shot + --chat + --serve + --watch)
+cmd/registry/           # Registry (data-plane config endpoint: /config, /watch; wire types from the SDK)
+cmd/agent-runtime/      # reference runtime built on the Go SDK (one-shot + --chat + --serve + --watch)
 cmd/example-mcp/        # minimal MCP server (test fixture)
 config/crd|rbac|manager # kustomize bases
 config/default          # full deploy (webhook/cert-manager)

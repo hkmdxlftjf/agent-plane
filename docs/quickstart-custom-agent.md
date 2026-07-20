@@ -176,9 +176,9 @@ type AgentConfig struct {
 		MCPToolName string          `json:"mcpToolName"`
 		InputSchema json.RawMessage `json:"inputSchema"`
 	} `json:"tools"`
-	Spec struct {
-		PromptRef *struct{ Name string } `json:"promptRef"`
-	} `json:"spec"`
+	Prompt *struct {
+		System string `json:"system"`
+	} `json:"prompt"`
 }
 
 func main() {
@@ -200,7 +200,9 @@ func main() {
 
 	// 3. Build tools + system prompt from the config.
 	system := "You are a helpful assistant."
-	// (Fetch the PromptTemplate body via the K8s API if cfg.Spec.PromptRef is set.)
+	if cfg.Prompt != nil && cfg.Prompt.System != "" {
+		system = cfg.Prompt.System // PromptTemplate resolved server-side by the Registry
+	}
 
 	// 4. Run one turn of the model+tool loop.
 	answer := runLoop(ctx, cfg, system, apiKey, "Say hello and echo the word 'ping'.")
@@ -237,7 +239,7 @@ func runLoop(ctx context.Context, cfg *AgentConfig, system, apiKey, prompt strin
 }
 
 // dispatch invokes a tool by name. http tools are a plain POST of the JSON args;
-// mcp tools speak JSON-RPC (initialize + tools/call) — see agentloop.callMCPTool.
+// mcp tools speak JSON-RPC (initialize + tools/call) — see the SDK's agentloop.
 func dispatch(ctx context.Context, cfg *AgentConfig, name, args string) string {
 	for _, t := range cfg.Tools {
 		if t.Name != name {
@@ -254,7 +256,8 @@ func dispatch(ctx context.Context, cfg *AgentConfig, name, args string) string {
 }
 
 // ---- small HTTP helpers (chat, openAITools, callMCP, post, mustFetch, env) ----
-// Elided for brevity; full working versions live in internal/agentloop/ and
+// Elided for brevity; full working versions live in the Go SDK
+// (github.com/hkmdxlftjf/agent-plane-sdk-go, package agentloop) and
 // cmd/agent-runtime/. The shapes are:
 //   chat(...)       POST {endpoint}/chat/completions  -> choices[0].message
 //   post(...)       POST {toolEndpoint} with the raw JSON args -> body
@@ -305,11 +308,14 @@ func chat(ctx context.Context, endpoint, key, model string, msgs, tools []any) m
 }
 ```
 
-> **Don't hand-roll it in Go?** The full, working reference is in this repo:
-> `internal/agentloop/agentloop.go` (the loop, http + mcp dispatch, multi-turn
-> `Session`) and `cmd/agent-runtime/main.go` (config fetch, Secret read, prompt
-> lookup, plus `--chat`, `--serve` web UI, and `--watch` hot-reload modes). Copy
-> `agentloop` into your project and you have steps 3–4 done.
+> **Don't hand-roll it in Go?** Use the SDK:
+> `go get github.com/hkmdxlftjf/agent-plane-sdk-go`. It ships the wire types,
+> a `FetchConfig`/`Watch` Registry client (SSE reconnect + `configHash` dedup
+> built in), a `secrets.Reader` for RBAC Secret reads, and reference `agentloop`
+> (the loop, http + mcp dispatch, multi-turn `Session`), `memory`, and
+> `retriever` packages — steps 1–4 become ~30 lines (see the SDK README).
+> `cmd/agent-runtime/main.go` in this repo is a complete runtime built on it,
+> including `--chat`, `--serve` web UI, and `--watch` hot-reload modes.
 
 ### Add hot-reload (optional)
 
