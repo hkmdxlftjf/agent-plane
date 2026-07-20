@@ -1,9 +1,9 @@
 module github.com/hkmdxlftjf/agent-plane
 
-go 1.24.5
+go 1.26.5
 
 require (
-	github.com/hkmdxlftjf/agent-plane-sdk-go v0.1.0
+	github.com/hkmdxlftjf/agent-plane-sdk-go v0.1.1
 	github.com/onsi/ginkgo/v2 v2.22.0
 	github.com/onsi/gomega v1.36.1
 	k8s.io/api v0.34.0
