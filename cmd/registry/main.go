@@ -288,6 +288,20 @@ func (s *server) buildConfigFrom(ctx context.Context, agent *corev1alpha1.Agent)
 			s.log.Error(err, "resolve promptTemplate", "promptTemplate", eff.PromptRef.Name)
 		}
 	}
+	// Resolve the Workflow step graph the same way. Agent Plane never executes
+	// it — the runtime interprets the engine-neutral graph.
+	if eff.WorkflowRef != nil {
+		var wf corev1alpha1.Workflow
+		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: eff.WorkflowRef.Name}, &wf); err == nil {
+			wv := &sdk.Workflow{Name: wf.Name, Engine: wf.Spec.Engine, Version: wf.Spec.Version}
+			for _, st := range wf.Spec.Steps {
+				wv.Steps = append(wv.Steps, sdk.WorkflowStep{Name: st.Name, Type: st.Type, Next: st.Next})
+			}
+			out.Workflow = wv
+		} else {
+			s.log.Error(err, "resolve workflow", "workflow", eff.WorkflowRef.Name)
+		}
+	}
 	if eff.ModelRef != nil {
 		var model corev1alpha1.Model
 		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: eff.ModelRef.Name}, &model); err == nil {
