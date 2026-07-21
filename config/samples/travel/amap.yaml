@@ -1,0 +1,105 @@
+# Real-data variant of the travel-planner sample, backed by Amap's (高德地图)
+# official hosted MCP server instead of the canned orders-mcp tools.
+#
+# The MCPServer uses externalEndpoint mode: no workload is created in the
+# cluster; the vendor-hosted URL is published to status.endpoint as-is.
+#
+# Setup:
+#   1. Get a free key at https://lbs.amap.com/api/webservice/create-project-and-key
+#   2. Replace YOUR_AMAP_KEY below. NOTE: the key rides in the URL, so anyone
+#      who can read MCPServer resources can see it — fine for a demo key;
+#      self-host an image with the key in a Secret for anything sensitive.
+#   3. kubectl apply -f config/samples/travel/ -n <ns>   (needs the shared
+#      Model/Credential samples and travel-agent.yaml's Workflow + PromptTemplate)
+#
+# Run (from the SDK repo; the hosted endpoint is reachable from the host, so
+# no --tool-endpoint overrides are needed):
+#
+#   go run ./examples/workflow-runner --namespace <ns> --name travel-agent-amap \
+#     --prompt "Plan a 3-day history-focused trip to Beijing, comfort hotels."
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: amap-maps
+spec:
+  transport: http
+  externalEndpoint: "https://mcp.amap.com/mcp?key=YOUR_AMAP_KEY"
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Tool
+metadata:
+  name: amap-poi-search
+spec:
+  type: mcp
+  description: Search real points of interest (attractions, hotels, restaurants) in a Chinese city by keyword. Returns names, addresses and coordinates from Amap.
+  mcpServerRef:
+    name: amap-maps
+  mcpToolName: maps_text_search
+  inputSchema:
+    type: object
+    properties:
+      keywords:
+        type: string
+        description: "search keywords, e.g. 故宫, 历史景点, 舒适型酒店"
+      city:
+        type: string
+        description: "city name, e.g. 北京"
+    required: ["keywords"]
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Tool
+metadata:
+  name: amap-around-search
+spec:
+  type: mcp
+  description: Search points of interest around a coordinate (from a previous POI result), useful for finding hotels or restaurants near an attraction.
+  mcpServerRef:
+    name: amap-maps
+  mcpToolName: maps_around_search
+  inputSchema:
+    type: object
+    properties:
+      keywords:
+        type: string
+      location:
+        type: string
+        description: "center coordinate as lon,lat — take it from a previous POI search result"
+      radius:
+        type: string
+        description: "search radius in meters, default 1000"
+    required: ["keywords", "location"]
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Tool
+metadata:
+  name: amap-weather
+spec:
+  type: mcp
+  description: Real weather forecast (multi-day) for a Chinese city, from Amap.
+  mcpServerRef:
+    name: amap-maps
+  mcpToolName: maps_weather
+  inputSchema:
+    type: object
+    properties:
+      city:
+        type: string
+        description: "city name, e.g. 北京"
+    required: ["city"]
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Agent
+metadata:
+  name: travel-agent-amap
+spec:
+  description: Travel-planning agent on real Amap data (workflow + prompt shared with travel-agent).
+  modelRef:
+    name: llm-model
+  workflowRef:
+    name: travel-planning
+  promptRef:
+    name: travel-planner-prompt
+  toolRefs:
+    - name: amap-poi-search
+    - name: amap-around-search
+    - name: amap-weather

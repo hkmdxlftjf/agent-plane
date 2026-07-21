@@ -177,10 +177,14 @@ func handleToolCall(w http.ResponseWriter, req *rpcRequest) {
 	}
 }
 
+// unknownArg is the placeholder echoed back when a required string argument
+// is missing from a tools/call.
+const unknownArg = "unknown"
+
 func handleGetWeather(w http.ResponseWriter, req *rpcRequest, args map[string]any) {
 	city, _ := args["city"].(string)
 	if city == "" {
-		city = "unknown"
+		city = unknownArg
 	}
 	text := fetchWeather(city)
 	writeResult(w, req.ID, map[string]any{
@@ -216,7 +220,7 @@ func fetchWeather(city string) string {
 func handleSearchAttractions(w http.ResponseWriter, req *rpcRequest, args map[string]any) {
 	city, _ := args["city"].(string)
 	if city == "" {
-		city = "unknown"
+		city = unknownArg
 	}
 	pref, _ := args["preference"].(string)
 	byPref := map[string][]map[string]any{
@@ -251,7 +255,7 @@ func handleSearchAttractions(w http.ResponseWriter, req *rpcRequest, args map[st
 func handleSearchHotels(w http.ResponseWriter, req *rpcRequest, args map[string]any) {
 	city, _ := args["city"].(string)
 	if city == "" {
-		city = "unknown"
+		city = unknownArg
 	}
 	typ, _ := args["type"].(string)
 	byType := map[string][]map[string]any{
@@ -279,9 +283,10 @@ func handleSearchHotels(w http.ResponseWriter, req *rpcRequest, args map[string]
 	})
 }
 
-func handleGetOrderStatus(w http.ResponseWriter, req *rpcRequest, args map[string]any) {	orderID, _ := args["orderId"].(string)
+func handleGetOrderStatus(w http.ResponseWriter, req *rpcRequest, args map[string]any) {
+	orderID, _ := args["orderId"].(string)
 	if orderID == "" {
-		orderID = "unknown"
+		orderID = unknownArg
 	}
 	// Canned but deterministic result.
 	result := map[string]any{
