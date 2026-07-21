@@ -72,6 +72,18 @@ is a complete runtime built on it.
     "system": "You are a support agent…"   // ready to use; no CR read needed
   },
 
+  "workflow": {                      // resolved from the Agent's Workflow (workflowRef)
+    "name":    "react-loop",
+    "engine":  "langgraph",          // free-form target engine hint
+    "version": "1.0.0",
+    "steps": [                       // engine-neutral step graph; Agent Plane never executes it
+      { "name": "plan",    "type": "planner", "next": ["act"] },
+      { "name": "act",     "type": "tool",    "next": ["reflect"] },
+      { "name": "reflect", "type": "reflect", "next": ["act", "finish"] },
+      { "name": "finish",  "type": "finish" }
+    ]
+  },
+
   "model": {                         // present when the Agent is Ready
     "provider":  "custom",
     "modelName": "claude-haiku-4-5-20251001",
@@ -130,6 +142,11 @@ Conventions:
 - `prompt` is the resolved system prompt of the Agent's `promptRef`
   PromptTemplate; absent when no PromptTemplate is referenced. Runtimes need no
   access to PromptTemplate CRs.
+- `workflow` is the resolved step graph of the Agent's `workflowRef` Workflow;
+  absent when none is referenced. It is a **declaration only** — the control
+  plane never executes it. What `planner`/`tool`/`reflect`/`finish` (or any
+  other step type) *means* is up to the runtime/engine; a runnable interpreter
+  lives in the SDK's `examples/workflow-runner`.
 - When not Ready, `model` may be absent and `configHash` is `""`.
 - `tools[]` is the union of the Agent's `toolRefs` and the tools of every
   `toolSetRefs` member, deduplicated by name.
