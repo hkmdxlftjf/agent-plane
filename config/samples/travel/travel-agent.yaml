@@ -1,0 +1,128 @@
+# Travel-planner sample — an adaptation of the "intelligent travel assistant"
+# from datawhalechina/hello-agents (chapter 13) onto Agent Plane resources.
+#
+# hello-agents builds it as four Python agents (attractions / weather / hotels
+# search, then an LLM-only planner) wired in code. On Agent Plane the same
+# design is *declared*:
+#
+#   hello-agents                        Agent Plane
+#   ─────────────────────────────       ─────────────────────────────────────
+#   AttractionSearchAgent + MCP tool →  Tool attraction-search (mcp)
+#   WeatherQueryAgent     + MCP tool →  Tool weather (mcp, shared sample)
+#   HotelAgent            + MCP tool →  Tool hotel-search (mcp)
+#   PlannerAgent system prompt       →  PromptTemplate travel-planner-prompt
+#   plan_trip() pipeline             →  Workflow travel-planning (declared graph)
+#   HelloAgents runtime              →  any runtime; the SDK's
+#                                       examples/workflow-runner interprets it
+#
+# The MCP tools are served by the sample orders-mcp server (cmd/example-mcp),
+# which ships canned attraction/hotel data and live wttr.in weather — a
+# deterministic stand-in for Amap MCP.
+#
+# Apply into a namespace that already has the shared samples (Model llm-model /
+# Credential / MCPServer orders-mcp):
+#
+#   kubectl apply -f config/samples/travel/ -n <ns>
+#
+# Then run the workflow interpreter from the SDK repo:
+#
+#   go run ./examples/workflow-runner --namespace <ns> --name travel-agent \
+#     --prompt "Plan a 3-day history-focused trip to Beijing, comfort hotels."
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Workflow
+metadata:
+  name: travel-planning
+spec:
+  engine: agentloop        # interpreted by the SDK's examples/workflow-runner
+  version: "1.0.0"
+  steps:
+    - name: plan           # decompose the request (city, days, preferences, budget)
+      type: planner
+      next: ["research"]
+    - name: research       # call attraction/weather/hotel tools per the plan
+      type: tool
+      next: ["review"]
+    - name: review         # judge the draft itinerary; loop back if it's lacking
+      type: reflect
+      next: ["research", "done"]
+    - name: done
+      type: finish
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: PromptTemplate
+metadata:
+  name: travel-planner-prompt
+spec:
+  version: "1.0.0"
+  system: |
+    You are a professional travel planner. Build day-by-day itineraries that
+    respect the traveler's city, dates, preferences, budget and accommodation
+    type.
+
+    Rules:
+    - Ground every recommendation in tool results — never invent attractions,
+      hotels, or weather. Query attractions, weather, and hotels before
+      composing the itinerary.
+    - Schedule 2-3 attractions per day, grouped to minimize travel between them.
+    - Adapt to the weather (prefer indoor attractions on rainy days).
+    - Include three meals a day and one hotel suggestion matching the requested
+      type.
+    - End with a per-category budget estimate (attractions / hotel / meals /
+      transport) and 2-3 practical tips.
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Tool
+metadata:
+  name: attraction-search
+spec:
+  type: mcp
+  description: Search tourist attractions in a city, optionally filtered by traveler preference (history, nature, food).
+  mcpServerRef:
+    name: orders-mcp
+  mcpToolName: search_attractions
+  inputSchema:
+    type: object
+    properties:
+      city:
+        type: string
+      preference:
+        type: string
+        description: "history | nature | food"
+    required: ["city"]
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Tool
+metadata:
+  name: hotel-search
+spec:
+  type: mcp
+  description: Search hotels in a city by accommodation type (budget, comfort, luxury).
+  mcpServerRef:
+    name: orders-mcp
+  mcpToolName: search_hotels
+  inputSchema:
+    type: object
+    properties:
+      city:
+        type: string
+      type:
+        type: string
+        description: "budget | comfort | luxury"
+    required: ["city"]
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Agent
+metadata:
+  name: travel-agent
+spec:
+  description: Travel-planning agent (hello-agents ch.13 adapted to Agent Plane).
+  modelRef:
+    name: llm-model
+  workflowRef:
+    name: travel-planning
+  promptRef:
+    name: travel-planner-prompt
+  toolRefs:
+    - name: attraction-search
+    - name: hotel-search
+    - name: weather
