@@ -1,0 +1,74 @@
+{{- if .Values.webhook.enable }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: agent-plane-validating-webhook-configuration
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- if .Values.certmanager.enable }}
+    cert-manager.io/inject-ca-from: "{{ $.Release.Namespace }}/serving-cert"
+    {{- end }}
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+webhooks:
+  - name: vagent-v1alpha1.kb.io
+    clientConfig:
+      service:
+        name: agent-plane-webhook-service
+        namespace: {{ .Release.Namespace }}
+        path: /validate-core-agent-plane-io-v1alpha1-agent
+    failurePolicy: Fail
+    sideEffects: None
+    admissionReviewVersions:
+      - v1
+    rules:
+      - operations:
+          - CREATE
+          - UPDATE
+        apiGroups:
+          - core.hkmdxlftjf.io
+        apiVersions:
+          - v1alpha1
+        resources:
+          - agents
+  - name: vtool-v1alpha1.kb.io
+    clientConfig:
+      service:
+        name: agent-plane-webhook-service
+        namespace: {{ .Release.Namespace }}
+        path: /validate-core-agent-plane-io-v1alpha1-tool
+    failurePolicy: Fail
+    sideEffects: None
+    admissionReviewVersions:
+      - v1
+    rules:
+      - operations:
+          - CREATE
+          - UPDATE
+        apiGroups:
+          - core.hkmdxlftjf.io
+        apiVersions:
+          - v1alpha1
+        resources:
+          - tools
+  - name: vworkflow-v1alpha1.kb.io
+    clientConfig:
+      service:
+        name: agent-plane-webhook-service
+        namespace: {{ .Release.Namespace }}
+        path: /validate-core-agent-plane-io-v1alpha1-workflow
+    failurePolicy: Fail
+    sideEffects: None
+    admissionReviewVersions:
+      - v1
+    rules:
+      - operations:
+          - CREATE
+          - UPDATE
+        apiGroups:
+          - core.hkmdxlftjf.io
+        apiVersions:
+          - v1alpha1
+        resources:
+          - workflows
+{{- end }}
