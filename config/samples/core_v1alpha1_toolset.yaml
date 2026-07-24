@@ -1,8 +1,0 @@
-apiVersion: core.hkmdxlftjf.io/v1alpha1
-kind: ToolSet
-metadata:
-  name: support-tools
-spec:
-  description: Standard toolkit shared by customer-support agents.
-  toolRefs:
-    - name: order-lookup
