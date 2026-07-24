@@ -22,6 +22,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -55,6 +56,20 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	var mcp corev1alpha1.MCPServer
 	if err := r.Get(ctx, req.NamespacedName, &mcp); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// External mode: the MCP server lives outside the cluster. No workload is
+	// materialized; the declared URL is the endpoint.
+	if mcp.Spec.ExternalEndpoint != "" {
+		if err := r.deleteManaged(ctx, &mcp); err != nil {
+			return ctrl.Result{}, err
+		}
+		mcp.Status.ObservedGeneration = mcp.Generation
+		mcp.Status.Endpoint = mcp.Spec.ExternalEndpoint
+		mcp.Status.AvailableReplicas = 0
+		setCondition(&mcp.Status.Conditions, corev1alpha1.ConditionReady, metav1.ConditionTrue, corev1alpha1.ReasonReconciled, "external endpoint", mcp.Generation)
+		log.Info("reconciled MCPServer", "external", mcp.Spec.ExternalEndpoint)
+		return ctrl.Result{}, r.Status().Update(ctx, &mcp)
 	}
 
 	if err := r.reconcileDeployment(ctx, &mcp); err != nil {
@@ -101,6 +116,25 @@ func servicePort(mcp *corev1alpha1.MCPServer) int32 {
 		return mcp.Spec.Port
 	}
 	return 8080
+}
+
+// deleteManaged removes the owned Deployment/Service, for an MCPServer that
+// switched from image mode to externalEndpoint mode.
+func (r *MCPServerReconciler) deleteManaged(ctx context.Context, mcp *corev1alpha1.MCPServer) error {
+	key := client.ObjectKey{Namespace: mcp.Namespace, Name: mcp.Name}
+	var dep appsv1.Deployment
+	if err := r.Get(ctx, key, &dep); err == nil && metav1.IsControlledBy(&dep, mcp) {
+		if err := r.Delete(ctx, &dep); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	var svc corev1.Service
+	if err := r.Get(ctx, key, &svc); err == nil && metav1.IsControlledBy(&svc, mcp) {
+		if err := r.Delete(ctx, &svc); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 // reconcileDeployment creates or updates the Deployment owned by the MCPServer.

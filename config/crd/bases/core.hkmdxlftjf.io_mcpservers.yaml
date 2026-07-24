@@ -212,8 +212,19 @@ spec:
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
+              externalEndpoint:
+                description: |-
+                  externalEndpoint is the URL of an MCP server hosted outside the cluster.
+                  When set, no Deployment/Service is created and this URL is published to
+                  status.endpoint directly. Note: a URL with query parameters (e.g. an
+                  api key) is visible to anyone who can read this resource — prefer
+                  self-hosting (image) when the key must stay in a Secret.
+                pattern: ^https?://.+
+                type: string
               image:
-                description: image is the container image implementing the MCP server.
+                description: |-
+                  image is the container image implementing the MCP server. Mutually
+                  exclusive with externalEndpoint.
                 minLength: 1
                 type: string
               port:
@@ -297,9 +308,11 @@ spec:
                 - http
                 - sse
                 type: string
-            required:
-            - image
             type: object
+            x-kubernetes-validations:
+            - message: exactly one of image or externalEndpoint must be set
+              rule: (has(self.image) && !has(self.externalEndpoint)) || (!has(self.image)
+                && has(self.externalEndpoint))
           status:
             description: status defines the observed state of MCPServer
             properties:

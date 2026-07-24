@@ -27,12 +27,26 @@ type MCPTransport string
 
 // MCPServerSpec describes an MCP (Model Context Protocol) server. The Operator
 // materializes this into a Deployment + Service; Agents only reference the
-// MCPServer and never deal with workloads directly.
+// MCPServer and never deal with workloads directly. Alternatively,
+// externalEndpoint declares an MCP server hosted outside the cluster (e.g. a
+// vendor's managed endpoint) — no workload is created and the endpoint is
+// published to status as-is.
+// +kubebuilder:validation:XValidation:rule="(has(self.image) && !has(self.externalEndpoint)) || (!has(self.image) && has(self.externalEndpoint))",message="exactly one of image or externalEndpoint must be set"
 type MCPServerSpec struct {
-	// image is the container image implementing the MCP server.
+	// image is the container image implementing the MCP server. Mutually
+	// exclusive with externalEndpoint.
 	// +kubebuilder:validation:MinLength=1
-	// +required
-	Image string `json:"image"`
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// externalEndpoint is the URL of an MCP server hosted outside the cluster.
+	// When set, no Deployment/Service is created and this URL is published to
+	// status.endpoint directly. Note: a URL with query parameters (e.g. an
+	// api key) is visible to anyone who can read this resource — prefer
+	// self-hosting (image) when the key must stay in a Secret.
+	// +kubebuilder:validation:Pattern=`^https?://.+`
+	// +optional
+	ExternalEndpoint string `json:"externalEndpoint,omitempty"`
 
 	// transport is the protocol transport the server exposes.
 	// +kubebuilder:default=http

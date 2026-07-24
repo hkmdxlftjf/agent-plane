@@ -4,5 +4,5 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 images:
 - name: controller
-  newName: agent-plane
-  newTag: dev
+  newName: ghcr.io/hkmdxlftjf/agent-plane
+  newTag: latest

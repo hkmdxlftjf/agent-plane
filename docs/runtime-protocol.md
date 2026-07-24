@@ -151,7 +151,8 @@ Conventions:
 - `tools[]` is the union of the Agent's `toolRefs` and the tools of every
   `toolSetRefs` member, deduplicated by name.
 - `tools[].endpoint`: for `http` it's the tool's own URL; for `mcp` it's the
-  backing MCPServer's in-cluster endpoint.
+  backing MCPServer's in-cluster endpoint — or, for an MCPServer declared with
+  `spec.externalEndpoint`, the external URL verbatim.
 - `skills[].content` is the resolved markdown body; the runtime concatenates it
   into the system prompt. Empty when the Skill's ConfigMap/content is missing.
 - `memories[]` carries only backend + Secret coordinates. As with `model`, the

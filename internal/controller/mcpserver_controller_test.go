@@ -81,4 +81,61 @@ var _ = Describe("MCPServer Controller", func() {
 			Expect(mcp.Status.Endpoint).NotTo(BeEmpty())
 		})
 	})
+
+	Context("When reconciling an external MCPServer", func() {
+		const resourceName = "test-mcp-external"
+
+		ctx := context.Background()
+		key := types.NamespacedName{Name: resourceName, Namespace: "default"}
+
+		BeforeEach(func() {
+			mcp := &corev1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+				Spec: corev1alpha1.MCPServerSpec{
+					ExternalEndpoint: "https://mcp.example.com/mcp?key=test",
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, mcp))).To(Succeed())
+		})
+
+		AfterEach(func() {
+			mcp := &corev1alpha1.MCPServer{}
+			if err := k8sClient.Get(ctx, key, mcp); err == nil {
+				Expect(k8sClient.Delete(ctx, mcp)).To(Succeed())
+			}
+		})
+
+		It("publishes the external URL as the endpoint without creating workloads", func() {
+			reconciler := &MCPServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("not creating a Deployment or Service")
+			Expect(k8sClient.Get(ctx, key, &appsv1.Deployment{})).NotTo(Succeed())
+			Expect(k8sClient.Get(ctx, key, &corev1.Service{})).NotTo(Succeed())
+
+			By("publishing the external URL and Ready=true")
+			mcp := &corev1alpha1.MCPServer{}
+			Expect(k8sClient.Get(ctx, key, mcp)).To(Succeed())
+			Expect(mcp.Status.Endpoint).To(Equal("https://mcp.example.com/mcp?key=test"))
+			cond := metav1.Condition{}
+			for _, c := range mcp.Status.Conditions {
+				if c.Type == corev1alpha1.ConditionReady {
+					cond = c
+				}
+			}
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+		})
+
+		It("rejects a spec with both image and externalEndpoint", func() {
+			bad := &corev1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-mcp-both", Namespace: "default"},
+				Spec: corev1alpha1.MCPServerSpec{
+					Image:            "example:latest",
+					ExternalEndpoint: "https://mcp.example.com/mcp",
+				},
+			}
+			Expect(k8sClient.Create(ctx, bad)).NotTo(Succeed())
+		})
+	})
 })
