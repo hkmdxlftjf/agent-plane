@@ -38,7 +38,7 @@ var _ = Describe("ToolPolicy Controller", func() {
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: nsDefault, // TODO(user):Modify as needed
 		}
 		toolpolicy := &corev1alpha1.ToolPolicy{}
 
@@ -49,7 +49,7 @@ var _ = Describe("ToolPolicy Controller", func() {
 				resource := &corev1alpha1.ToolPolicy{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: nsDefault,
 					},
 					// TODO(user): Specify other spec details if needed.
 				}

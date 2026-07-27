@@ -24,8 +24,8 @@ import "testing"
 // produces a different hash.
 func TestConfigHashDeterminism(t *testing.T) {
 	base := []resolvedRef{
-		{Kind: "Model", Name: "m", ResourceVersion: "1"},
-		{Kind: "Tool", Name: "s", ResourceVersion: "7"},
+		{Kind: kindModel, Name: "m", ResourceVersion: "1"},
+		{Kind: kindTool, Name: "s", ResourceVersion: "7"},
 	}
 
 	h1, err := configHash(base)
@@ -35,8 +35,8 @@ func TestConfigHashDeterminism(t *testing.T) {
 
 	// Same input -> same hash.
 	same := []resolvedRef{
-		{Kind: "Model", Name: "m", ResourceVersion: "1"},
-		{Kind: "Tool", Name: "s", ResourceVersion: "7"},
+		{Kind: kindModel, Name: "m", ResourceVersion: "1"},
+		{Kind: kindTool, Name: "s", ResourceVersion: "7"},
 	}
 	h2, err := configHash(same)
 	if err != nil {
@@ -48,8 +48,8 @@ func TestConfigHashDeterminism(t *testing.T) {
 
 	// A bumped ResourceVersion changes the hash (dependency changed).
 	bumped := []resolvedRef{
-		{Kind: "Model", Name: "m", ResourceVersion: "2"},
-		{Kind: "Tool", Name: "s", ResourceVersion: "7"},
+		{Kind: kindModel, Name: "m", ResourceVersion: "2"},
+		{Kind: kindTool, Name: "s", ResourceVersion: "7"},
 	}
 	h3, err := configHash(bumped)
 	if err != nil {
@@ -61,7 +61,7 @@ func TestConfigHashDeterminism(t *testing.T) {
 
 	// An added reference changes the hash.
 	added := append([]resolvedRef{}, base...)
-	added = append(added, resolvedRef{Kind: "Memory", Name: "mem", ResourceVersion: "1"})
+	added = append(added, resolvedRef{Kind: kindMemory, Name: "mem", ResourceVersion: "1"})
 	h4, err := configHash(added)
 	if err != nil {
 		t.Fatalf("configHash returned error: %v", err)

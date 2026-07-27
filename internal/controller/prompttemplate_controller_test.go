@@ -38,7 +38,7 @@ var _ = Describe("PromptTemplate Controller", func() {
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: nsDefault, // TODO(user):Modify as needed
 		}
 		prompttemplate := &corev1alpha1.PromptTemplate{}
 
@@ -49,7 +49,7 @@ var _ = Describe("PromptTemplate Controller", func() {
 				resource := &corev1alpha1.PromptTemplate{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: nsDefault,
 					},
 					// TODO(user): Specify other spec details if needed.
 				}

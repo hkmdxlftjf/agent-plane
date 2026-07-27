@@ -150,12 +150,12 @@ func (r *MCPServerReconciler) reconcileDeployment(ctx context.Context, mcp *core
 		dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 		dep.Spec.Template.Labels = labels
 		dep.Spec.Template.Spec.Containers = []corev1.Container{{
-			Name:      "mcp",
+			Name:      portNameMCP,
 			Image:     mcp.Spec.Image,
 			Env:       mcp.Spec.Env,
 			Resources: mcp.Spec.Resources,
 			Ports: []corev1.ContainerPort{{
-				Name:          "mcp",
+				Name:          portNameMCP,
 				ContainerPort: port,
 			}},
 		}}
@@ -174,7 +174,7 @@ func (r *MCPServerReconciler) reconcileService(ctx context.Context, mcp *corev1a
 		svc.Labels = labels
 		svc.Spec.Selector = labels
 		svc.Spec.Ports = []corev1.ServicePort{{
-			Name:       "mcp",
+			Name:       portNameMCP,
 			Port:       port,
 			TargetPort: intstr.FromInt32(port),
 			Protocol:   corev1.ProtocolTCP,

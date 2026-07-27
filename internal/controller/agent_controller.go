@@ -145,7 +145,7 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 	eff := corev1alpha1.ApplyClassDefaults(agent.Spec, class)
 
 	if eff.ModelRef != nil {
-		targets = append(targets, target{"Model", eff.ModelRef.Name, &corev1alpha1.Model{}})
+		targets = append(targets, target{kindModel, eff.ModelRef.Name, &corev1alpha1.Model{}})
 	}
 	if eff.WorkflowRef != nil {
 		targets = append(targets, target{"Workflow", eff.WorkflowRef.Name, &corev1alpha1.Workflow{}})
@@ -154,7 +154,7 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 		targets = append(targets, target{"PromptTemplate", eff.PromptRef.Name, &corev1alpha1.PromptTemplate{}})
 	}
 	for _, ref := range eff.ToolRefs {
-		targets = append(targets, target{"Tool", ref.Name, &corev1alpha1.Tool{}})
+		targets = append(targets, target{kindTool, ref.Name, &corev1alpha1.Tool{}})
 	}
 	for _, ref := range eff.ToolSetRefs {
 		targets = append(targets, target{"ToolSet", ref.Name, &corev1alpha1.ToolSet{}})
@@ -163,7 +163,7 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 		targets = append(targets, target{"Skill", ref.Name, &corev1alpha1.Skill{}})
 	}
 	for _, ref := range eff.MemoryRefs {
-		targets = append(targets, target{"Memory", ref.Name, &corev1alpha1.Memory{}})
+		targets = append(targets, target{kindMemory, ref.Name, &corev1alpha1.Memory{}})
 	}
 	for _, ref := range eff.PolicyRefs {
 		targets = append(targets, target{"Policy", ref.Name, &corev1alpha1.Policy{}})
@@ -303,7 +303,7 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 			Resources: rt.Resources,
 		}
 		if rt.Port != 0 {
-			container.Ports = []corev1.ContainerPort{{Name: "http", ContainerPort: rt.Port}}
+			container.Ports = []corev1.ContainerPort{{Name: portNameHTTP, ContainerPort: rt.Port}}
 		}
 		dep.Spec.Template.Spec.Containers = []corev1.Container{container}
 		return controllerutil.SetControllerReference(agent, dep, r.Scheme)
@@ -317,7 +317,7 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 			svc.Labels = labels
 			svc.Spec.Selector = labels
 			svc.Spec.Ports = []corev1.ServicePort{{
-				Name: "http", Port: rt.Port, TargetPort: intstr.FromInt32(rt.Port), Protocol: corev1.ProtocolTCP,
+				Name: portNameHTTP, Port: rt.Port, TargetPort: intstr.FromInt32(rt.Port), Protocol: corev1.ProtocolTCP,
 			}}
 			return controllerutil.SetControllerReference(agent, svc, r.Scheme)
 		}); err != nil {

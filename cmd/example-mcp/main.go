@@ -84,6 +84,24 @@ const hotelsToolSchema = `{
   "required": ["city"]
 }`
 
+// JSON field keys and well-known values reused across MCP responses.
+const (
+	keyName        = "name"
+	keyDescription = "description"
+	keyInputSchema = "inputSchema"
+	keyContent     = "content"
+	keyIsError     = "isError"
+	keyHours       = "hours"
+	keyLocation    = "location"
+	keyType        = "type"
+	keyText        = "text"
+	keyRating      = "rating"
+	keyTicket      = "ticket"
+	keyVisitTime   = "visitTime"
+	keyPrice       = "price"
+	ticketFree     = "free"
+)
+
 func main() {
 	var addr string
 	flag.StringVar(&addr, "addr", ":8080", "listen address")
@@ -123,30 +141,30 @@ func handleRPC(w http.ResponseWriter, r *http.Request) {
 		writeResult(w, req.ID, map[string]any{
 			"protocolVersion": "2025-06-18",
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "agent-plane-example-mcp", "version": "0.1.0"},
+			"serverInfo":      map[string]any{keyName: "agent-plane-example-mcp", "version": "0.1.0"},
 		})
 	case "tools/list":
 		writeResult(w, req.ID, map[string]any{
 			"tools": []map[string]any{
 				{
-					"name":        "get_order_status",
-					"description": "Look up the delivery status of a customer order by its order id.",
-					"inputSchema": json.RawMessage(orderToolSchema),
+					keyName:        "get_order_status",
+					keyDescription: "Look up the delivery status of a customer order by its order id.",
+					keyInputSchema: json.RawMessage(orderToolSchema),
 				},
 				{
-					"name":        "get_weather",
-					"description": "Get the current weather for a city.",
-					"inputSchema": json.RawMessage(weatherToolSchema),
+					keyName:        "get_weather",
+					keyDescription: "Get the current weather for a city.",
+					keyInputSchema: json.RawMessage(weatherToolSchema),
 				},
 				{
-					"name":        "search_attractions",
-					"description": "Search tourist attractions in a city, optionally filtered by traveler preference (history, nature, food).",
-					"inputSchema": json.RawMessage(attractionsToolSchema),
+					keyName:        "search_attractions",
+					keyDescription: "Search tourist attractions in a city, optionally filtered by traveler preference (history, nature, food).",
+					keyInputSchema: json.RawMessage(attractionsToolSchema),
 				},
 				{
-					"name":        "search_hotels",
-					"description": "Search hotels in a city by accommodation type (budget, comfort, luxury).",
-					"inputSchema": json.RawMessage(hotelsToolSchema),
+					keyName:        "search_hotels",
+					keyDescription: "Search hotels in a city by accommodation type (budget, comfort, luxury).",
+					keyInputSchema: json.RawMessage(hotelsToolSchema),
 				},
 			},
 		})
@@ -188,8 +206,8 @@ func handleGetWeather(w http.ResponseWriter, req *rpcRequest, args map[string]an
 	}
 	text := fetchWeather(city)
 	writeResult(w, req.ID, map[string]any{
-		"content": []map[string]any{{"type": "text", "text": text}},
-		"isError": false,
+		keyContent: []map[string]any{{keyType: keyText, keyText: text}},
+		keyIsError: false,
 	})
 }
 
@@ -225,19 +243,19 @@ func handleSearchAttractions(w http.ResponseWriter, req *rpcRequest, args map[st
 	pref, _ := args["preference"].(string)
 	byPref := map[string][]map[string]any{
 		"history": {
-			{"name": "Old Palace Museum", "rating": 4.8, "hours": "08:30-17:00", "ticket": "60 CNY", "visitTime": "3h"},
-			{"name": "Ancient City Wall", "rating": 4.6, "hours": "08:00-18:00", "ticket": "45 CNY", "visitTime": "2h"},
-			{"name": "Heritage Temple", "rating": 4.5, "hours": "07:30-17:30", "ticket": "30 CNY", "visitTime": "1.5h"},
+			{keyName: "Old Palace Museum", keyRating: 4.8, keyHours: "08:30-17:00", keyTicket: "60 CNY", keyVisitTime: "3h"},
+			{keyName: "Ancient City Wall", keyRating: 4.6, keyHours: "08:00-18:00", keyTicket: "45 CNY", keyVisitTime: "2h"},
+			{keyName: "Heritage Temple", keyRating: 4.5, keyHours: "07:30-17:30", keyTicket: "30 CNY", keyVisitTime: "1.5h"},
 		},
 		"nature": {
-			{"name": "Lakeside National Park", "rating": 4.7, "hours": "06:00-19:00", "ticket": "free", "visitTime": "4h"},
-			{"name": "Fragrant Hills", "rating": 4.5, "hours": "07:00-18:00", "ticket": "15 CNY", "visitTime": "3h"},
-			{"name": "Botanical Garden", "rating": 4.4, "hours": "08:00-17:00", "ticket": "10 CNY", "visitTime": "2h"},
+			{keyName: "Lakeside National Park", keyRating: 4.7, keyHours: "06:00-19:00", keyTicket: ticketFree, keyVisitTime: "4h"},
+			{keyName: "Fragrant Hills", keyRating: 4.5, keyHours: "07:00-18:00", keyTicket: "15 CNY", keyVisitTime: "3h"},
+			{keyName: "Botanical Garden", keyRating: 4.4, keyHours: "08:00-17:00", keyTicket: "10 CNY", keyVisitTime: "2h"},
 		},
 		"food": {
-			{"name": "Night Food Street", "rating": 4.6, "hours": "16:00-24:00", "ticket": "free", "visitTime": "2h"},
-			{"name": "Time-honored Restaurant Row", "rating": 4.4, "hours": "10:00-22:00", "ticket": "free", "visitTime": "2h"},
-			{"name": "Local Snack Market", "rating": 4.3, "hours": "09:00-21:00", "ticket": "free", "visitTime": "1.5h"},
+			{keyName: "Night Food Street", keyRating: 4.6, keyHours: "16:00-24:00", keyTicket: ticketFree, keyVisitTime: "2h"},
+			{keyName: "Time-honored Restaurant Row", keyRating: 4.4, keyHours: "10:00-22:00", keyTicket: ticketFree, keyVisitTime: "2h"},
+			{keyName: "Local Snack Market", keyRating: 4.3, keyHours: "09:00-21:00", keyTicket: ticketFree, keyVisitTime: "1.5h"},
 		},
 	}
 	list, ok := byPref[pref]
@@ -246,8 +264,8 @@ func handleSearchAttractions(w http.ResponseWriter, req *rpcRequest, args map[st
 	}
 	payload, _ := json.Marshal(map[string]any{"city": city, "preference": pref, "attractions": list})
 	writeResult(w, req.ID, map[string]any{
-		"content": []map[string]any{{"type": "text", "text": string(payload)}},
-		"isError": false,
+		keyContent: []map[string]any{{keyType: keyText, keyText: string(payload)}},
+		keyIsError: false,
 	})
 }
 
@@ -257,29 +275,29 @@ func handleSearchHotels(w http.ResponseWriter, req *rpcRequest, args map[string]
 	if city == "" {
 		city = unknownArg
 	}
-	typ, _ := args["type"].(string)
+	typ, _ := args[keyType].(string)
 	byType := map[string][]map[string]any{
 		"budget": {
-			{"name": "City Youth Hostel", "rating": 4.2, "price": "180 CNY/night", "location": "near metro line 2"},
-			{"name": "Express Inn Downtown", "rating": 4.0, "price": "260 CNY/night", "location": "city center"},
+			{keyName: "City Youth Hostel", keyRating: 4.2, keyPrice: "180 CNY/night", keyLocation: "near metro line 2"},
+			{keyName: "Express Inn Downtown", keyRating: 4.0, keyPrice: "260 CNY/night", keyLocation: "city center"},
 		},
 		"comfort": {
-			{"name": "Garden Boutique Hotel", "rating": 4.5, "price": "520 CNY/night", "location": "old town"},
-			{"name": "Riverside Business Hotel", "rating": 4.4, "price": "480 CNY/night", "location": "river district"},
+			{keyName: "Garden Boutique Hotel", keyRating: 4.5, keyPrice: "520 CNY/night", keyLocation: "old town"},
+			{keyName: "Riverside Business Hotel", keyRating: 4.4, keyPrice: "480 CNY/night", keyLocation: "river district"},
 		},
 		"luxury": {
-			{"name": "Grand Lakeview Hotel", "rating": 4.8, "price": "1480 CNY/night", "location": "lakefront"},
-			{"name": "Imperial Palace Hotel", "rating": 4.7, "price": "1280 CNY/night", "location": "CBD"},
+			{keyName: "Grand Lakeview Hotel", keyRating: 4.8, keyPrice: "1480 CNY/night", keyLocation: "lakefront"},
+			{keyName: "Imperial Palace Hotel", keyRating: 4.7, keyPrice: "1280 CNY/night", keyLocation: "CBD"},
 		},
 	}
 	list, ok := byType[typ]
 	if !ok {
 		list = byType["comfort"]
 	}
-	payload, _ := json.Marshal(map[string]any{"city": city, "type": typ, "hotels": list})
+	payload, _ := json.Marshal(map[string]any{"city": city, keyType: typ, "hotels": list})
 	writeResult(w, req.ID, map[string]any{
-		"content": []map[string]any{{"type": "text", "text": string(payload)}},
-		"isError": false,
+		keyContent: []map[string]any{{keyType: keyText, keyText: string(payload)}},
+		keyIsError: false,
 	})
 }
 
@@ -297,8 +315,8 @@ func handleGetOrderStatus(w http.ResponseWriter, req *rpcRequest, args map[strin
 	}
 	payload, _ := json.Marshal(result)
 	writeResult(w, req.ID, map[string]any{
-		"content": []map[string]any{{"type": "text", "text": string(payload)}},
-		"isError": false,
+		keyContent: []map[string]any{{keyType: keyText, keyText: string(payload)}},
+		keyIsError: false,
 	})
 }
 

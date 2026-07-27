@@ -25,6 +25,9 @@ import (
 	corev1alpha1 "github.com/hkmdxlftjf/agent-plane/api/v1alpha1"
 )
 
+// stepPlan is a reused workflow step name in the webhook validation tests.
+const stepPlan = "plan"
+
 var _ = Describe("Workflow Webhook", func() {
 	var (
 		obj       *corev1alpha1.Workflow
@@ -51,7 +54,7 @@ var _ = Describe("Workflow Webhook", func() {
 
 		It("admits a workflow whose steps and next targets are consistent", func() {
 			obj.Spec.Steps = []corev1alpha1.WorkflowStep{
-				{Name: "plan", Next: []string{"act"}},
+				{Name: stepPlan, Next: []string{"act"}},
 				{Name: "act"},
 			}
 			Expect(validator.ValidateCreate(ctx, obj)).Error().NotTo(HaveOccurred())
@@ -59,15 +62,15 @@ var _ = Describe("Workflow Webhook", func() {
 
 		It("denies a workflow with a dangling next target", func() {
 			obj.Spec.Steps = []corev1alpha1.WorkflowStep{
-				{Name: "plan", Next: []string{"nope"}},
+				{Name: stepPlan, Next: []string{"nope"}},
 			}
 			Expect(validator.ValidateCreate(ctx, obj)).Error().To(HaveOccurred())
 		})
 
 		It("denies a workflow with duplicate step names", func() {
 			obj.Spec.Steps = []corev1alpha1.WorkflowStep{
-				{Name: "plan"},
-				{Name: "plan"},
+				{Name: stepPlan},
+				{Name: stepPlan},
 			}
 			_, err := validator.ValidateUpdate(ctx, oldObj, obj)
 			Expect(err).To(HaveOccurred())

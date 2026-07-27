@@ -1,0 +1,7 @@
+apiVersion: v2
+name: agent-plane
+description: A Helm chart to distribute the project agent-plane
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+icon: "https://example.com/icon.png"

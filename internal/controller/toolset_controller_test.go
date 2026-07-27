@@ -38,7 +38,7 @@ var _ = Describe("ToolSet Controller", func() {
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: nsDefault, // TODO(user):Modify as needed
 		}
 		toolset := &corev1alpha1.ToolSet{}
 
@@ -49,7 +49,7 @@ var _ = Describe("ToolSet Controller", func() {
 				resource := &corev1alpha1.ToolSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: nsDefault,
 					},
 					Spec: corev1alpha1.ToolSetSpec{
 						ToolRefs: []corev1alpha1.LocalReference{{Name: "some-tool"}},

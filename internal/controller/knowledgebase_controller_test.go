@@ -38,7 +38,7 @@ var _ = Describe("KnowledgeBase Controller", func() {
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: nsDefault, // TODO(user):Modify as needed
 		}
 		knowledgebase := &corev1alpha1.KnowledgeBase{}
 
@@ -49,7 +49,7 @@ var _ = Describe("KnowledgeBase Controller", func() {
 				resource := &corev1alpha1.KnowledgeBase{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: nsDefault,
 					},
 					Spec: corev1alpha1.KnowledgeBaseSpec{
 						Source: "s3",

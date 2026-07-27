@@ -1,0 +1,108 @@
+{{- if .Values.rbac.enable }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    {{- include "chart.labels" . | nindent 4 }}
+  name: agent-plane-manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - core.hkmdxlftjf.io
+  resources:
+  - agentclasses
+  - agents
+  - credentials
+  - knowledgebases
+  - mcpservers
+  - memories
+  - models
+  - policies
+  - prompttemplates
+  - skills
+  - toolpolicies
+  - tools
+  - toolsets
+  - workflows
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - core.hkmdxlftjf.io
+  resources:
+  - agentclasses/finalizers
+  - agents/finalizers
+  - credentials/finalizers
+  - knowledgebases/finalizers
+  - mcpservers/finalizers
+  - memories/finalizers
+  - models/finalizers
+  - policies/finalizers
+  - prompttemplates/finalizers
+  - skills/finalizers
+  - toolpolicies/finalizers
+  - tools/finalizers
+  - toolsets/finalizers
+  - workflows/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - core.hkmdxlftjf.io
+  resources:
+  - agentclasses/status
+  - agents/status
+  - credentials/status
+  - knowledgebases/status
+  - mcpservers/status
+  - memories/status
+  - models/status
+  - policies/status
+  - prompttemplates/status
+  - skills/status
+  - toolpolicies/status
+  - tools/status
+  - toolsets/status
+  - workflows/status
+  verbs:
+  - get
+  - patch
+  - update
+{{- end -}}
