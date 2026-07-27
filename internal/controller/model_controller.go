@@ -53,7 +53,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	var targets []refTarget
 	if model.Spec.CredentialRef != nil {
-		targets = append(targets, refTarget{"Credential", model.Spec.CredentialRef.Name, &corev1alpha1.Credential{}})
+		targets = append(targets, refTarget{kindCredential, model.Spec.CredentialRef.Name, &corev1alpha1.Credential{}})
 	}
 
 	missing, err := resolveTargets(ctx, r.Client, model.Namespace, targets)

@@ -38,7 +38,7 @@ var _ = Describe("Credential Controller", func() {
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: nsDefault, // TODO(user):Modify as needed
 		}
 		credential := &corev1alpha1.Credential{}
 
@@ -49,12 +49,12 @@ var _ = Describe("Credential Controller", func() {
 				resource := &corev1alpha1.Credential{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: nsDefault,
 					},
 					Spec: corev1alpha1.CredentialSpec{
 						SecretRef: corev1alpha1.SecretKeyReference{
 							Name: "some-secret",
-							Key:  "api-key",
+							Key:  secretKeyAPIKey,
 						},
 					},
 				}

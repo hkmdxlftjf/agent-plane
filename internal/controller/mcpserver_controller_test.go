@@ -36,11 +36,11 @@ var _ = Describe("MCPServer Controller", func() {
 		const resourceName = "test-mcp"
 
 		ctx := context.Background()
-		key := types.NamespacedName{Name: resourceName, Namespace: "default"}
+		key := types.NamespacedName{Name: resourceName, Namespace: nsDefault}
 
 		BeforeEach(func() {
 			mcp := &corev1alpha1.MCPServer{
-				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: nsDefault},
 				Spec: corev1alpha1.MCPServerSpec{
 					Image:    "ghcr.io/agent-plane/example-mcp:latest",
 					Port:     8080,
@@ -86,11 +86,11 @@ var _ = Describe("MCPServer Controller", func() {
 		const resourceName = "test-mcp-external"
 
 		ctx := context.Background()
-		key := types.NamespacedName{Name: resourceName, Namespace: "default"}
+		key := types.NamespacedName{Name: resourceName, Namespace: nsDefault}
 
 		BeforeEach(func() {
 			mcp := &corev1alpha1.MCPServer{
-				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: nsDefault},
 				Spec: corev1alpha1.MCPServerSpec{
 					ExternalEndpoint: "https://mcp.example.com/mcp?key=test",
 				},
@@ -129,7 +129,7 @@ var _ = Describe("MCPServer Controller", func() {
 
 		It("rejects a spec with both image and externalEndpoint", func() {
 			bad := &corev1alpha1.MCPServer{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-mcp-both", Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: "test-mcp-both", Namespace: nsDefault},
 				Spec: corev1alpha1.MCPServerSpec{
 					Image:            "example:latest",
 					ExternalEndpoint: "https://mcp.example.com/mcp",

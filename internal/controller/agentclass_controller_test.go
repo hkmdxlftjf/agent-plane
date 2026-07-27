@@ -38,7 +38,7 @@ var _ = Describe("AgentClass Controller", func() {
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: nsDefault, // TODO(user):Modify as needed
 		}
 		agentclass := &corev1alpha1.AgentClass{}
 
@@ -49,7 +49,7 @@ var _ = Describe("AgentClass Controller", func() {
 				resource := &corev1alpha1.AgentClass{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: nsDefault,
 					},
 					// TODO(user): Specify other spec details if needed.
 				}

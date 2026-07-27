@@ -51,7 +51,7 @@ func (r *ToolSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	targets := make([]refTarget, 0, len(set.Spec.ToolRefs))
 	for _, ref := range set.Spec.ToolRefs {
-		targets = append(targets, refTarget{"Tool", ref.Name, &corev1alpha1.Tool{}})
+		targets = append(targets, refTarget{kindTool, ref.Name, &corev1alpha1.Tool{}})
 	}
 
 	missing, err := resolveTargets(ctx, r.Client, set.Namespace, targets)

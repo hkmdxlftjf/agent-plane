@@ -52,7 +52,7 @@ func (r *AgentClassReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	targets := make([]refTarget, 0, 4)
 	if class.Spec.DefaultModelRef != nil {
-		targets = append(targets, refTarget{"Model", class.Spec.DefaultModelRef.Name, &corev1alpha1.Model{}})
+		targets = append(targets, refTarget{kindModel, class.Spec.DefaultModelRef.Name, &corev1alpha1.Model{}})
 	}
 	if class.Spec.DefaultWorkflowRef != nil {
 		targets = append(targets, refTarget{"Workflow", class.Spec.DefaultWorkflowRef.Name, &corev1alpha1.Workflow{}})

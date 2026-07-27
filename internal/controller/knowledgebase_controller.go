@@ -50,13 +50,13 @@ func (r *KnowledgeBaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	var targets []refTarget
 	if kb.Spec.EmbeddingModelRef != nil {
-		targets = append(targets, refTarget{"Model", kb.Spec.EmbeddingModelRef.Name, &corev1alpha1.Model{}})
+		targets = append(targets, refTarget{kindModel, kb.Spec.EmbeddingModelRef.Name, &corev1alpha1.Model{}})
 	}
 	if kb.Spec.MemoryRef != nil {
-		targets = append(targets, refTarget{"Memory", kb.Spec.MemoryRef.Name, &corev1alpha1.Memory{}})
+		targets = append(targets, refTarget{kindMemory, kb.Spec.MemoryRef.Name, &corev1alpha1.Memory{}})
 	}
 	if kb.Spec.CredentialRef != nil {
-		targets = append(targets, refTarget{"Credential", kb.Spec.CredentialRef.Name, &corev1alpha1.Credential{}})
+		targets = append(targets, refTarget{kindCredential, kb.Spec.CredentialRef.Name, &corev1alpha1.Credential{}})
 	}
 
 	missing, err := resolveTargets(ctx, r.Client, kb.Namespace, targets)

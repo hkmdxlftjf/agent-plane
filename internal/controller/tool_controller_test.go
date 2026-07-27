@@ -38,7 +38,7 @@ var _ = Describe("Tool Controller", func() {
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: nsDefault, // TODO(user):Modify as needed
 		}
 		tool := &corev1alpha1.Tool{}
 
@@ -49,10 +49,10 @@ var _ = Describe("Tool Controller", func() {
 				resource := &corev1alpha1.Tool{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: nsDefault,
 					},
 					Spec: corev1alpha1.ToolSpec{
-						Type: "http",
+						Type: toolTypeHTTP,
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())

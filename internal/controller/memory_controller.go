@@ -50,7 +50,7 @@ func (r *MemoryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	var targets []refTarget
 	if memory.Spec.ConnectionRef != nil {
-		targets = append(targets, refTarget{"Credential", memory.Spec.ConnectionRef.Name, &corev1alpha1.Credential{}})
+		targets = append(targets, refTarget{kindCredential, memory.Spec.ConnectionRef.Name, &corev1alpha1.Credential{}})
 	}
 
 	missing, err := resolveTargets(ctx, r.Client, memory.Namespace, targets)

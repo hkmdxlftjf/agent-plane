@@ -37,13 +37,13 @@ var _ = Describe("Reference resolution across resource controllers", func() {
 	Context("ToolSet", func() {
 		const setName = "res-toolset"
 		const toolName = "res-tool"
-		setKey := types.NamespacedName{Name: setName, Namespace: "default"}
-		toolKey := types.NamespacedName{Name: toolName, Namespace: "default"}
+		setKey := types.NamespacedName{Name: setName, Namespace: nsDefault}
+		toolKey := types.NamespacedName{Name: toolName, Namespace: nsDefault}
 
 		AfterEach(func() {
 			for _, obj := range []client.Object{
-				&corev1alpha1.ToolSet{ObjectMeta: metav1.ObjectMeta{Name: setName, Namespace: "default"}},
-				&corev1alpha1.Tool{ObjectMeta: metav1.ObjectMeta{Name: toolName, Namespace: "default"}},
+				&corev1alpha1.ToolSet{ObjectMeta: metav1.ObjectMeta{Name: setName, Namespace: nsDefault}},
+				&corev1alpha1.Tool{ObjectMeta: metav1.ObjectMeta{Name: toolName, Namespace: nsDefault}},
 			} {
 				_ = k8sClient.Delete(ctx, obj)
 			}
@@ -51,7 +51,7 @@ var _ = Describe("Reference resolution across resource controllers", func() {
 
 		It("is Degraded when a member Tool is missing, Ready once it exists", func() {
 			set := &corev1alpha1.ToolSet{
-				ObjectMeta: metav1.ObjectMeta{Name: setName, Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: setName, Namespace: nsDefault},
 				Spec:       corev1alpha1.ToolSetSpec{ToolRefs: []corev1alpha1.LocalReference{{Name: toolName}}},
 			}
 			Expect(k8sClient.Create(ctx, set)).To(Succeed())
@@ -66,8 +66,8 @@ var _ = Describe("Reference resolution across resource controllers", func() {
 
 			By("creating the missing Tool and reconciling again")
 			tool := &corev1alpha1.Tool{
-				ObjectMeta: metav1.ObjectMeta{Name: toolName, Namespace: "default"},
-				Spec:       corev1alpha1.ToolSpec{Type: "http"},
+				ObjectMeta: metav1.ObjectMeta{Name: toolName, Namespace: nsDefault},
+				Spec:       corev1alpha1.ToolSpec{Type: toolTypeHTTP},
 			}
 			Expect(k8sClient.Create(ctx, tool)).To(Succeed())
 
@@ -81,21 +81,21 @@ var _ = Describe("Reference resolution across resource controllers", func() {
 		})
 	})
 
-	Context("Credential", func() {
+	Context(kindCredential, func() {
 		const credName = "res-cred"
 		const secretName = "res-secret"
-		credKey := types.NamespacedName{Name: credName, Namespace: "default"}
+		credKey := types.NamespacedName{Name: credName, Namespace: nsDefault}
 
 		AfterEach(func() {
-			_ = k8sClient.Delete(ctx, &corev1alpha1.Credential{ObjectMeta: metav1.ObjectMeta{Name: credName, Namespace: "default"}})
-			_ = k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "default"}})
+			_ = k8sClient.Delete(ctx, &corev1alpha1.Credential{ObjectMeta: metav1.ObjectMeta{Name: credName, Namespace: nsDefault}})
+			_ = k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: nsDefault}})
 		})
 
 		It("reports SecretFound=false when the Secret key is absent, true once present", func() {
 			cred := &corev1alpha1.Credential{
-				ObjectMeta: metav1.ObjectMeta{Name: credName, Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: credName, Namespace: nsDefault},
 				Spec: corev1alpha1.CredentialSpec{
-					SecretRef: corev1alpha1.SecretKeyReference{Name: secretName, Key: "api-key"},
+					SecretRef: corev1alpha1.SecretKeyReference{Name: secretName, Key: secretKeyAPIKey},
 				},
 			}
 			Expect(k8sClient.Create(ctx, cred)).To(Succeed())
@@ -109,8 +109,8 @@ var _ = Describe("Reference resolution across resource controllers", func() {
 
 			By("creating the Secret with the referenced key")
 			secret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "default"},
-				Data:       map[string][]byte{"api-key": []byte("s3cr3t")},
+				ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: nsDefault},
+				Data:       map[string][]byte{secretKeyAPIKey: []byte("s3cr3t")},
 			}
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 

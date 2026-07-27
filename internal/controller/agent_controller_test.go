@@ -36,20 +36,20 @@ var _ = Describe("Agent Controller", func() {
 		const modelName = "test-agent-model"
 
 		ctx := context.Background()
-		agentKey := types.NamespacedName{Name: resourceName, Namespace: "default"}
-		modelKey := types.NamespacedName{Name: modelName, Namespace: "default"}
+		agentKey := types.NamespacedName{Name: resourceName, Namespace: nsDefault}
+		modelKey := types.NamespacedName{Name: modelName, Namespace: nsDefault}
 
 		BeforeEach(func() {
 			By("creating the referenced Model")
 			model := &corev1alpha1.Model{
-				ObjectMeta: metav1.ObjectMeta{Name: modelName, Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: modelName, Namespace: nsDefault},
 				Spec:       corev1alpha1.ModelSpec{Provider: "anthropic", ModelName: "claude-opus-4-8"},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, model))).To(Succeed())
 
 			By("creating the Agent referencing the Model")
 			agent := &corev1alpha1.Agent{
-				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: nsDefault},
 				Spec:       corev1alpha1.AgentSpec{ModelRef: &corev1alpha1.LocalReference{Name: modelName}},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
@@ -83,11 +83,11 @@ var _ = Describe("Agent Controller", func() {
 		const resourceName = "test-agent-missing"
 
 		ctx := context.Background()
-		agentKey := types.NamespacedName{Name: resourceName, Namespace: "default"}
+		agentKey := types.NamespacedName{Name: resourceName, Namespace: nsDefault}
 
 		BeforeEach(func() {
 			agent := &corev1alpha1.Agent{
-				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: nsDefault},
 				Spec:       corev1alpha1.AgentSpec{ModelRef: &corev1alpha1.LocalReference{Name: "does-not-exist"}},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())

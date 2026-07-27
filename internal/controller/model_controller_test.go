@@ -38,7 +38,7 @@ var _ = Describe("Model Controller", func() {
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: nsDefault, // TODO(user):Modify as needed
 		}
 		model := &corev1alpha1.Model{}
 
@@ -49,7 +49,7 @@ var _ = Describe("Model Controller", func() {
 				resource := &corev1alpha1.Model{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: nsDefault,
 					},
 					Spec: corev1alpha1.ModelSpec{
 						Provider:  "anthropic",
