@@ -67,7 +67,7 @@ func main() {
 	flag.StringVar(&ns, "namespace", envOr("AGENTPLANE_AGENT_NAMESPACE", "default"), "Agent namespace")
 	flag.StringVar(&name, "name", envOr("AGENTPLANE_AGENT_NAME", "demo-agent"), "Agent name")
 	flag.StringVar(&prompt, "prompt", "What is the status of order A-42? Use the available tool.", "user prompt")
-	flag.IntVar(&maxSteps, "max-steps", 5, "max tool-calling turns")
+	flag.IntVar(&maxSteps, "max-steps", 8, "max tool-calling turns")
 	flag.BoolVar(&watch, "watch", os.Getenv("AGENTPLANE_WATCH") == "1", "long-running mode: subscribe to the Registry and hot-reload config")
 	flag.BoolVar(&chatMode, "chat", false, "interactive multi-turn chat with the agent (REPL over stdin)")
 	flag.BoolVar(&serveMode, "serve", os.Getenv("AGENTPLANE_SERVE") == "1", "web mode: serve a browser chat UI + HTTP API")
@@ -138,6 +138,12 @@ func main() {
 		System: system, Tools: cfg.Tools, MaxSteps: maxSteps,
 		Logf: func(f string, a ...any) { fmt.Printf("  "+f+"\n", a...) },
 	}
+	// Register the in-process load_skill tool so the model can pull a skill's
+	// full instructions into context on demand (progressive disclosure). One
+	// registration covers all three modes below, which all build from base.
+	if tool, ok := loadSkillTool(cfg); ok {
+		base.LocalTools = map[string]agentloop.LocalTool{"load_skill": tool}
+	}
 
 	// Web mode: serve a browser chat UI + HTTP API.
 	if serveMode {
@@ -160,19 +166,73 @@ func main() {
 }
 
 // buildSystemPrompt composes the Registry-resolved PromptTemplate system text
-// with the Agent's Skill instruction packs (order preserved).
+// with a *catalog* of the Agent's Skills. Only each Skill's name + description
+// is inlined; the full instruction body is pulled into context on demand via
+// the load_skill tool (see loadSkillTool). This keeps the system prompt flat
+// regardless of how many skills an Agent mounts.
 func buildSystemPrompt(cfg *sdk.AgentConfig, logf func(string, ...any)) string {
 	system := "You are a helpful assistant. Use tools when they can answer the question."
 	if cfg.Prompt != nil && cfg.Prompt.System != "" {
 		system = cfg.Prompt.System
 	}
+	var catalog []string
 	for _, sk := range cfg.Skills {
-		if sk.Content != "" {
-			system += "\n\n# Skill: " + sk.Name + "\n" + sk.Content
-			logf("skill: %s (%d chars)", sk.Name, len(sk.Content))
+		if sk.Content == "" {
+			continue // nothing to load
 		}
+		desc := sk.Description
+		if desc == "" {
+			desc = sk.Name
+		}
+		catalog = append(catalog, fmt.Sprintf("- %s: %s", sk.Name, desc))
+		logf("skill (catalog): %s (%d chars, lazy)", sk.Name, len(sk.Content))
+	}
+	if len(catalog) > 0 {
+		system += "\n\n# Skills available\n" +
+			"The following skills are available but their full instructions are NOT loaded. " +
+			"When a skill is relevant to the user's request, call load_skill(name) to load its " +
+			"instructions before acting on that task.\n" +
+			strings.Join(catalog, "\n")
 	}
 	return system
+}
+
+// loadSkillTool builds the in-process load_skill tool. It serves a named Skill's
+// full instructions from the Registry-resolved config on demand, so skill bodies
+// enter the model context only when the model asks for them. The second return
+// is false when the Agent has no loadable skill, in which case the tool should
+// not be registered.
+func loadSkillTool(cfg *sdk.AgentConfig) (agentloop.LocalTool, bool) {
+	bodies := make(map[string]string, len(cfg.Skills))
+	var names []string
+	for _, sk := range cfg.Skills {
+		if sk.Content == "" {
+			continue
+		}
+		bodies[sk.Name] = sk.Content
+		names = append(names, sk.Name)
+	}
+	if len(bodies) == 0 {
+		return agentloop.LocalTool{}, false
+	}
+	return agentloop.LocalTool{
+		Description: "Load the full instructions for a named skill from the 'Skills available' " +
+			"catalog in the system prompt. Call this before acting on a task the skill covers.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string",` +
+			`"description":"skill name from the catalog"}},"required":["name"]}`),
+		Handler: func(_ context.Context, argsJSON string) (string, error) {
+			var args struct {
+				Name string `json:"name"`
+			}
+			_ = json.Unmarshal([]byte(argsJSON), &args)
+			if body, ok := bodies[args.Name]; ok {
+				return body, nil
+			}
+			// Return (not error) so the model can retry with a valid name.
+			return fmt.Sprintf("no such skill %q; available skills: %s",
+				args.Name, strings.Join(names, ", ")), nil
+		},
+	}, true
 }
 
 func fatal(what string, err error) {

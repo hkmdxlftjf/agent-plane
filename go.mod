@@ -3,7 +3,7 @@ module github.com/hkmdxlftjf/agent-plane
 go 1.26.5
 
 require (
-	github.com/hkmdxlftjf/agent-plane-sdk-go v0.2.0
+	github.com/hkmdxlftjf/agent-plane-sdk-go v0.3.0
 	github.com/onsi/ginkgo/v2 v2.22.0
 	github.com/onsi/gomega v1.36.1
 	k8s.io/api v0.34.0
@@ -99,3 +99,5 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
+
+replace github.com/hkmdxlftjf/agent-plane-sdk-go => ../agent-plane-sdk-go
