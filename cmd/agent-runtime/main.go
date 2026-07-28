@@ -175,7 +175,7 @@ func buildSystemPrompt(cfg *sdk.AgentConfig, logf func(string, ...any)) string {
 	if cfg.Prompt != nil && cfg.Prompt.System != "" {
 		system = cfg.Prompt.System
 	}
-	var catalog []string
+	catalog := make([]string, 0, len(cfg.Skills))
 	for _, sk := range cfg.Skills {
 		if sk.Content == "" {
 			continue // nothing to load
@@ -204,7 +204,7 @@ func buildSystemPrompt(cfg *sdk.AgentConfig, logf func(string, ...any)) string {
 // not be registered.
 func loadSkillTool(cfg *sdk.AgentConfig) (agentloop.LocalTool, bool) {
 	bodies := make(map[string]string, len(cfg.Skills))
-	var names []string
+	names := make([]string, 0, len(cfg.Skills))
 	for _, sk := range cfg.Skills {
 		if sk.Content == "" {
 			continue
