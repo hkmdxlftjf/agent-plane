@@ -282,8 +282,9 @@ docker build -f Dockerfile.agent-runtime -t agent-plane-runtime:dev .   # image 
 ## 9. Running the reference runtime
 
 `cmd/agent-runtime` is a minimal real agent that pulls config from the Registry,
-reads the model key from the Secret, folds in Skill content / Memory / KnowledgeBase
-context, and runs a tool-calling loop. Point it at a deployed Agent:
+reads the model key from the Secret, exposes Skills as a load-on-demand catalog,
+folds in Memory / KnowledgeBase context, and runs a tool-calling loop. Point it at
+a deployed Agent:
 
 ```sh
 export KUBECONFIG=$HOME/.kube/config
@@ -326,6 +327,13 @@ go run ./cmd/agent-runtime --namespace <ns> --name <agent> --prompt "..."
 
 An Agent references Tools via `toolRefs` and Skills via `skillRefs`; both can be
 used together.
+
+In the reference runtime a Skill is *progressively disclosed*: the system prompt
+carries only a `# Skills available` catalog of `name: description` lines, and the
+model calls the built-in `load_skill(name)` tool to pull a body into context when
+a task actually needs it. So mounting ten skills costs ten catalog lines per turn
+rather than ten full instruction packs, at the price of one extra tool-calling turn
+whenever a skill is used (hence the runtime's `--max-steps` default of 8).
 
 ---
 
