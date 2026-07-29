@@ -130,8 +130,11 @@ Point it at a deployed Agent and it:
 
 1. pulls the resolved config from the **Registry** (never the API server),
 2. reads the model API key from the referenced **Secret** via its own RBAC,
-3. takes the Registry-resolved **PromptTemplate** system prompt and folds in any **Skill**
-   content, restores conversation **Memory**, and retrieves from **KnowledgeBases**, and
+3. takes the Registry-resolved **PromptTemplate** system prompt and advertises any
+   **Skill** as a name + description catalog — full instruction bodies load on demand
+   via a built-in `load_skill` tool, so the prompt stays flat however many skills an
+   Agent mounts — restores conversation **Memory**, and retrieves from
+   **KnowledgeBases**, and
 4. runs a **tool-calling loop**: the model requests a tool, the runtime invokes
    it over **MCP JSON-RPC** (or plain HTTP), feeds the result back, and returns
    the answer.

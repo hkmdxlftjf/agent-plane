@@ -107,7 +107,7 @@ is a complete runtime built on it.
     {                                //   from Skill.spec.content or its ConfigMap
       "name":        "refund-handling",
       "description": "How to process refunds",
-      "content":     "# Refund policy\n…"    // runtime folds this into the system prompt
+      "content":     "# Refund policy\n…"    // runtime serves this on demand (load_skill)
     }
   ],
 
@@ -153,8 +153,12 @@ Conventions:
 - `tools[].endpoint`: for `http` it's the tool's own URL; for `mcp` it's the
   backing MCPServer's in-cluster endpoint — or, for an MCPServer declared with
   `spec.externalEndpoint`, the external URL verbatim.
-- `skills[].content` is the resolved markdown body; the runtime concatenates it
-  into the system prompt. Empty when the Skill's ConfigMap/content is missing.
+- `skills[].content` is the resolved markdown body. Empty when the Skill's
+  ConfigMap/content is missing. The reference runtime does *not* inline it into the
+  system prompt: it advertises `name` + `description` as a catalog and serves the
+  body through an in-process `load_skill` tool when the model asks for it, keeping
+  the prompt size independent of the number of skills. Inlining is still a valid
+  runtime choice — the payload is the same either way.
 - `memories[]` carries only backend + Secret coordinates. As with `model`, the
   Registry never serves the connection value — the runtime reads the Secret and
   connects itself. Only `redis` is implemented in the reference runtime today;
