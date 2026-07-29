@@ -40,10 +40,10 @@ spec:
     properties:
       keywords:
         type: string
-        description: "search keywords, e.g. Forbidden City, historic sites, comfort hotels"
+        description: "search keywords, in Chinese — the POI index is Chinese-language, e.g. 故宫, 历史景点, 舒适型酒店"
       city:
         type: string
-        description: "city name, e.g. Beijing"
+        description: "city name, in Chinese, e.g. 北京"
     required: ["keywords"]
 ---
 apiVersion: core.hkmdxlftjf.io/v1alpha1
@@ -84,7 +84,7 @@ spec:
     properties:
       city:
         type: string
-        description: "city name, e.g. Beijing"
+        description: "city name, in Chinese, e.g. 北京"
     required: ["city"]
 ---
 apiVersion: core.hkmdxlftjf.io/v1alpha1
