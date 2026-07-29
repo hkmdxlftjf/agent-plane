@@ -1,4 +1,4 @@
-# Real-data variant of the travel-planner sample, backed by Amap's (高德地图)
+# Real-data variant of the travel-planner sample, backed by Amap's (Gaode)
 # official hosted MCP server instead of the canned orders-mcp tools.
 #
 # The MCPServer uses externalEndpoint mode: no workload is created in the
@@ -40,10 +40,10 @@ spec:
     properties:
       keywords:
         type: string
-        description: "search keywords, e.g. 故宫, 历史景点, 舒适型酒店"
+        description: "search keywords, e.g. Forbidden City, historic sites, comfort hotels"
       city:
         type: string
-        description: "city name, e.g. 北京"
+        description: "city name, e.g. Beijing"
     required: ["keywords"]
 ---
 apiVersion: core.hkmdxlftjf.io/v1alpha1
@@ -84,7 +84,7 @@ spec:
     properties:
       city:
         type: string
-        description: "city name, e.g. 北京"
+        description: "city name, e.g. Beijing"
     required: ["city"]
 ---
 apiVersion: core.hkmdxlftjf.io/v1alpha1
