@@ -33,6 +33,15 @@ func toolPolicyNamed(name string, spec ToolPolicySpec) ToolPolicy {
 
 func i32(v int32) *int32 { return &v }
 
+// Fixture literals, extracted so the repetition inherent to table tests does
+// not read as a set of unrelated magic strings.
+const (
+	modelClaude = "claude"
+	modelGPT4   = "gpt-4"
+	toolRefund  = "refund"
+	toolLookup  = "lookup"
+)
+
 // No policies means nothing to enforce, and callers rely on nil to skip the
 // check entirely.
 func TestMergePoliciesEmpty(t *testing.T) {
@@ -56,15 +65,15 @@ func TestMergePoliciesRecordsSources(t *testing.T) {
 // is the property that makes "attach another Policy" a safe operation.
 func TestMergePoliciesOnlyNarrows(t *testing.T) {
 	eff := MergePolicies([]Policy{
-		policyNamed("a", PolicySpec{Models: &AccessRule{Allow: []string{"claude", "gpt-4"}}}),
-		policyNamed("b", PolicySpec{Models: &AccessRule{Allow: []string{"claude", "llama"}}}),
+		policyNamed("a", PolicySpec{Models: &AccessRule{Allow: []string{modelClaude, modelGPT4}}}),
+		policyNamed("b", PolicySpec{Models: &AccessRule{Allow: []string{modelClaude, "llama"}}}),
 	}, nil)
-	if got := strings.Join(eff.Models.Allow, ","); got != "claude" {
-		t.Errorf("merged allow = %q, want the intersection %q", got, "claude")
+	if got := strings.Join(eff.Models.Allow, ","); got != modelClaude {
+		t.Errorf("merged allow = %q, want the intersection %q", got, modelClaude)
 	}
 
 	eff = MergePolicies([]Policy{
-		policyNamed("a", PolicySpec{Tools: &AccessRule{Deny: []string{"refund"}}}),
+		policyNamed("a", PolicySpec{Tools: &AccessRule{Deny: []string{toolRefund}}}),
 		policyNamed("b", PolicySpec{Tools: &AccessRule{Deny: []string{"delete"}}}),
 	}, nil)
 	if len(eff.Tools.Deny) != 2 {
@@ -76,13 +85,13 @@ func TestMergePoliciesOnlyNarrows(t *testing.T) {
 // the other side to the empty set — that would deny everything by accident.
 func TestMergeEmptyAllowIsNotAnEmptySet(t *testing.T) {
 	eff := MergePolicies([]Policy{
-		policyNamed("a", PolicySpec{Models: &AccessRule{Allow: []string{"claude"}}}),
-		policyNamed("b", PolicySpec{Models: &AccessRule{Deny: []string{"gpt-4"}}}),
+		policyNamed("a", PolicySpec{Models: &AccessRule{Allow: []string{modelClaude}}}),
+		policyNamed("b", PolicySpec{Models: &AccessRule{Deny: []string{modelGPT4}}}),
 	}, nil)
-	if !eff.Models.Permits("claude") {
+	if !eff.Models.Permits(modelClaude) {
 		t.Error("claude should still be permitted after merging a deny-only Policy")
 	}
-	if eff.Models.Permits("gpt-4") {
+	if eff.Models.Permits(modelGPT4) {
 		t.Error("gpt-4 should be denied")
 	}
 }
@@ -90,10 +99,10 @@ func TestMergeEmptyAllowIsNotAnEmptySet(t *testing.T) {
 // A wildcard allow on one side must not narrow the other side's list.
 func TestMergeWildcardAllow(t *testing.T) {
 	eff := MergePolicies([]Policy{
-		policyNamed("a", PolicySpec{Models: &AccessRule{Allow: []string{"claude"}}}),
+		policyNamed("a", PolicySpec{Models: &AccessRule{Allow: []string{modelClaude}}}),
 		policyNamed("b", PolicySpec{Models: &AccessRule{Allow: []string{"*"}}}),
 	}, nil)
-	if !eff.Models.Permits("claude") {
+	if !eff.Models.Permits(modelClaude) {
 		t.Error("claude should survive a wildcard allow on the other side")
 	}
 }
@@ -102,10 +111,10 @@ func TestMergeWildcardAllow(t *testing.T) {
 // another Policy's deny.
 func TestMergeDenyBeatsAllowAcrossPolicies(t *testing.T) {
 	eff := MergePolicies([]Policy{
-		policyNamed("permissive", PolicySpec{Models: &AccessRule{Allow: []string{"gpt-4"}}}),
-		policyNamed("restrictive", PolicySpec{Models: &AccessRule{Deny: []string{"gpt-4"}}}),
+		policyNamed("permissive", PolicySpec{Models: &AccessRule{Allow: []string{modelGPT4}}}),
+		policyNamed("restrictive", PolicySpec{Models: &AccessRule{Deny: []string{modelGPT4}}}),
 	}, nil)
-	if eff.Models.Permits("gpt-4") {
+	if eff.Models.Permits(modelGPT4) {
 		t.Error("a deny in any Policy must win over an allow in another")
 	}
 }
@@ -157,9 +166,9 @@ func TestAccessRulePermits(t *testing.T) {
 func TestMatchToolRule(t *testing.T) {
 	rules := []ToolRule{
 		{Tool: "*", Action: ToolActionDeny},
-		{Tool: "lookup", Action: ToolActionAllow},
+		{Tool: toolLookup, Action: ToolActionAllow},
 	}
-	if got := MatchToolRule(rules, "lookup"); got == nil || got.Action != ToolActionAllow {
+	if got := MatchToolRule(rules, toolLookup); got == nil || got.Action != ToolActionAllow {
 		t.Errorf("exact match should beat an earlier wildcard, got %+v", got)
 	}
 	if got := MatchToolRule(rules, "other"); got == nil || got.Action != ToolActionDeny {
@@ -181,19 +190,19 @@ func TestViolations(t *testing.T) {
 		{
 			name:     "nil policy never violates",
 			eff:      nil,
-			refs:     AgentReferences{Model: "anything", Tools: []string{"refund"}},
+			refs:     AgentReferences{Model: "anything", Tools: []string{toolRefund}},
 			wantNone: true,
 		},
 		{
 			name:     "denied model",
-			eff:      MergePolicies([]Policy{policyNamed("p", PolicySpec{Models: &AccessRule{Deny: []string{"gpt-4"}}})}, nil),
-			refs:     AgentReferences{Model: "gpt-4"},
+			eff:      MergePolicies([]Policy{policyNamed("p", PolicySpec{Models: &AccessRule{Deny: []string{modelGPT4}}})}, nil),
+			refs:     AgentReferences{Model: modelGPT4},
 			wantSubs: []string{`model "gpt-4" is denied`},
 		},
 		{
 			name:     "allowed model passes",
-			eff:      MergePolicies([]Policy{policyNamed("p", PolicySpec{Models: &AccessRule{Allow: []string{"claude"}}})}, nil),
-			refs:     AgentReferences{Model: "claude"},
+			eff:      MergePolicies([]Policy{policyNamed("p", PolicySpec{Models: &AccessRule{Allow: []string{modelClaude}}})}, nil),
+			refs:     AgentReferences{Model: modelClaude},
 			wantNone: true,
 		},
 		{
@@ -217,27 +226,27 @@ func TestViolations(t *testing.T) {
 		{
 			name: "tool denied by a ToolPolicy rule",
 			eff: MergePolicies(nil, []ToolPolicy{toolPolicyNamed("tp", ToolPolicySpec{
-				Rules: []ToolRule{{Tool: "refund", Action: ToolActionDeny}},
+				Rules: []ToolRule{{Tool: toolRefund, Action: ToolActionDeny}},
 			})}),
-			refs:     AgentReferences{Tools: []string{"refund"}},
+			refs:     AgentReferences{Tools: []string{toolRefund}},
 			wantSubs: []string{`tool "refund" is denied by a ToolPolicy rule`},
 		},
 		{
 			name: "tool unreachable under default deny",
 			eff: MergePolicies(nil, []ToolPolicy{toolPolicyNamed("tp", ToolPolicySpec{
-				Rules:         []ToolRule{{Tool: "lookup", Action: ToolActionAllow}},
+				Rules:         []ToolRule{{Tool: toolLookup, Action: ToolActionAllow}},
 				DefaultAction: ToolActionDeny,
 			})}),
-			refs:     AgentReferences{Tools: []string{"refund"}},
+			refs:     AgentReferences{Tools: []string{toolRefund}},
 			wantSubs: []string{"matches no ToolPolicy rule"},
 		},
 		{
 			name: "an explicitly allowed tool passes under default deny",
 			eff: MergePolicies(nil, []ToolPolicy{toolPolicyNamed("tp", ToolPolicySpec{
-				Rules:         []ToolRule{{Tool: "lookup", Action: ToolActionAllow}},
+				Rules:         []ToolRule{{Tool: toolLookup, Action: ToolActionAllow}},
 				DefaultAction: ToolActionDeny,
 			})}),
-			refs:     AgentReferences{Tools: []string{"lookup"}},
+			refs:     AgentReferences{Tools: []string{toolLookup}},
 			wantNone: true,
 		},
 		{
@@ -245,9 +254,9 @@ func TestViolations(t *testing.T) {
 			// so the Agent must still reach Ready. Only the runtime can count calls.
 			name: "a capped tool is not a declaration violation",
 			eff: MergePolicies(nil, []ToolPolicy{toolPolicyNamed("tp", ToolPolicySpec{
-				Rules: []ToolRule{{Tool: "refund", Action: ToolActionAllow, MaxCallsPerSession: i32(1)}},
+				Rules: []ToolRule{{Tool: toolRefund, Action: ToolActionAllow, MaxCallsPerSession: i32(1)}},
 			})}),
-			refs:     AgentReferences{Tools: []string{"refund"}},
+			refs:     AgentReferences{Tools: []string{toolRefund}},
 			wantNone: true,
 		},
 		{
@@ -255,23 +264,23 @@ func TestViolations(t *testing.T) {
 			// contradiction worth surfacing at apply time rather than at call time.
 			name: "maxCallsPerSession=0 is reported at the call site, not here",
 			eff: MergePolicies(nil, []ToolPolicy{toolPolicyNamed("tp", ToolPolicySpec{
-				Rules: []ToolRule{{Tool: "refund", Action: ToolActionAllow, MaxCallsPerSession: i32(0)}},
+				Rules: []ToolRule{{Tool: toolRefund, Action: ToolActionAllow, MaxCallsPerSession: i32(0)}},
 			})}),
-			refs:     AgentReferences{Tools: []string{"refund"}},
+			refs:     AgentReferences{Tools: []string{toolRefund}},
 			wantNone: true,
 		},
 		{
 			name: "several violations are all reported",
 			eff: MergePolicies([]Policy{policyNamed("p", PolicySpec{
-				Models: &AccessRule{Deny: []string{"gpt-4"}},
-				Tools:  &AccessRule{Deny: []string{"refund"}},
+				Models: &AccessRule{Deny: []string{modelGPT4}},
+				Tools:  &AccessRule{Deny: []string{toolRefund}},
 			})}, nil),
-			refs:     AgentReferences{Model: "gpt-4", Tools: []string{"refund"}},
+			refs:     AgentReferences{Model: modelGPT4, Tools: []string{toolRefund}},
 			wantSubs: []string{`model "gpt-4"`, `tool "refund"`},
 		},
 		{
 			name:     "empty refs never violate",
-			eff:      MergePolicies([]Policy{policyNamed("p", PolicySpec{Models: &AccessRule{Allow: []string{"claude"}}})}, nil),
+			eff:      MergePolicies([]Policy{policyNamed("p", PolicySpec{Models: &AccessRule{Allow: []string{modelClaude}}})}, nil),
 			refs:     AgentReferences{},
 			wantNone: true,
 		},
@@ -299,12 +308,12 @@ func TestViolations(t *testing.T) {
 // permissive rule in one must not rescue a denial in the other.
 func TestViolationsCoarseDenyBeatsToolPolicyAllow(t *testing.T) {
 	eff := MergePolicies(
-		[]Policy{policyNamed("p", PolicySpec{Tools: &AccessRule{Deny: []string{"refund"}}})},
+		[]Policy{policyNamed("p", PolicySpec{Tools: &AccessRule{Deny: []string{toolRefund}}})},
 		[]ToolPolicy{toolPolicyNamed("tp", ToolPolicySpec{
-			Rules: []ToolRule{{Tool: "refund", Action: ToolActionAllow}},
+			Rules: []ToolRule{{Tool: toolRefund, Action: ToolActionAllow}},
 		})},
 	)
-	got := eff.Violations(AgentReferences{Tools: []string{"refund"}})
+	got := eff.Violations(AgentReferences{Tools: []string{toolRefund}})
 	if len(got) != 1 || !strings.Contains(got[0], "denied by policy") {
 		t.Errorf("Violations = %v, want the coarse deny to win", got)
 	}

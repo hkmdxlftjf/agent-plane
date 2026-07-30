@@ -48,7 +48,10 @@ func testServer(t *testing.T, objs ...runtime.Object) *server {
 	return &server{reader: c, log: discardLog{}}
 }
 
-const testNS = "default"
+const (
+	testNS     = "default"
+	toolRefund = "refund"
+)
 
 // With no policy referenced the served view must be nil, so a runtime can tell
 // "unconstrained" from "constrained by an empty policy".
@@ -77,7 +80,7 @@ func TestResolvePolicyServesMergedView(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "tool-limits", Namespace: testNS},
 			Spec: corev1alpha1.ToolPolicySpec{
 				Rules: []corev1alpha1.ToolRule{
-					{Tool: "refund", Action: corev1alpha1.ToolActionAllow, MaxCallsPerSession: &cap2},
+					{Tool: toolRefund, Action: corev1alpha1.ToolActionAllow, MaxCallsPerSession: &cap2},
 					{Tool: "*", Action: corev1alpha1.ToolActionDeny},
 				},
 				DefaultAction: corev1alpha1.ToolActionDeny,
@@ -149,7 +152,7 @@ func TestBuildConfigFromAttachesPolicy(t *testing.T) {
 		&corev1alpha1.ToolPolicy{
 			ObjectMeta: metav1.ObjectMeta{Name: "tp", Namespace: testNS},
 			Spec: corev1alpha1.ToolPolicySpec{
-				Rules: []corev1alpha1.ToolRule{{Tool: "refund", Action: corev1alpha1.ToolActionDeny}},
+				Rules: []corev1alpha1.ToolRule{{Tool: toolRefund, Action: corev1alpha1.ToolActionDeny}},
 			},
 		},
 	)
@@ -168,7 +171,7 @@ func TestBuildConfigFromAttachesPolicy(t *testing.T) {
 	if cfg.Policy == nil {
 		t.Fatal("cfg.Policy = nil; the runtime would enforce nothing")
 	}
-	if len(cfg.Policy.ToolRules) != 1 || cfg.Policy.ToolRules[0].Tool != "refund" {
+	if len(cfg.Policy.ToolRules) != 1 || cfg.Policy.ToolRules[0].Tool != toolRefund {
 		t.Errorf("ToolRules = %+v", cfg.Policy.ToolRules)
 	}
 }

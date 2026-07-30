@@ -43,7 +43,7 @@ var _ = Describe("Agent Controller", func() {
 			By("creating the referenced Model")
 			model := &corev1alpha1.Model{
 				ObjectMeta: metav1.ObjectMeta{Name: modelName, Namespace: nsDefault},
-				Spec:       corev1alpha1.ModelSpec{Provider: "anthropic", ModelName: "claude-opus-4-8"},
+				Spec:       corev1alpha1.ModelSpec{Provider: testProvider, ModelName: testModelName},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, model))).To(Succeed())
 
@@ -131,7 +131,7 @@ var _ = Describe("Agent Controller", func() {
 		BeforeEach(func() {
 			model := &corev1alpha1.Model{
 				ObjectMeta: metav1.ObjectMeta{Name: modelName, Namespace: nsDefault},
-				Spec:       corev1alpha1.ModelSpec{Provider: "anthropic", ModelName: "claude-opus-4-8"},
+				Spec:       corev1alpha1.ModelSpec{Provider: testProvider, ModelName: testModelName},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, model))).To(Succeed())
 
@@ -201,13 +201,13 @@ var _ = Describe("Agent Controller", func() {
 		BeforeEach(func() {
 			model := &corev1alpha1.Model{
 				ObjectMeta: metav1.ObjectMeta{Name: modelName, Namespace: nsDefault},
-				Spec:       corev1alpha1.ModelSpec{Provider: "anthropic", ModelName: "claude-opus-4-8"},
+				Spec:       corev1alpha1.ModelSpec{Provider: testProvider, ModelName: testModelName},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, model))).To(Succeed())
 
 			tool := &corev1alpha1.Tool{
 				ObjectMeta: metav1.ObjectMeta{Name: toolName, Namespace: nsDefault},
-				Spec:       corev1alpha1.ToolSpec{Type: toolTypeHTTP, Endpoint: "http://example.invalid"},
+				Spec:       corev1alpha1.ToolSpec{Type: toolTypeHTTP, Endpoint: testToolEndpoint},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, tool))).To(Succeed())
 
@@ -288,13 +288,13 @@ var _ = Describe("Agent Controller", func() {
 		BeforeEach(func() {
 			model := &corev1alpha1.Model{
 				ObjectMeta: metav1.ObjectMeta{Name: modelName, Namespace: nsDefault},
-				Spec:       corev1alpha1.ModelSpec{Provider: "anthropic", ModelName: "claude-opus-4-8"},
+				Spec:       corev1alpha1.ModelSpec{Provider: testProvider, ModelName: testModelName},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, model))).To(Succeed())
 
 			tool := &corev1alpha1.Tool{
 				ObjectMeta: metav1.ObjectMeta{Name: toolName, Namespace: nsDefault},
-				Spec:       corev1alpha1.ToolSpec{Type: toolTypeHTTP, Endpoint: "http://example.invalid"},
+				Spec:       corev1alpha1.ToolSpec{Type: toolTypeHTTP, Endpoint: testToolEndpoint},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, tool))).To(Succeed())
 
@@ -356,13 +356,13 @@ var _ = Describe("Agent Controller", func() {
 		BeforeEach(func() {
 			model := &corev1alpha1.Model{
 				ObjectMeta: metav1.ObjectMeta{Name: modelName, Namespace: nsDefault},
-				Spec:       corev1alpha1.ModelSpec{Provider: "anthropic", ModelName: "claude-opus-4-8"},
+				Spec:       corev1alpha1.ModelSpec{Provider: testProvider, ModelName: testModelName},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, model))).To(Succeed())
 
 			tool := &corev1alpha1.Tool{
 				ObjectMeta: metav1.ObjectMeta{Name: toolName, Namespace: nsDefault},
-				Spec:       corev1alpha1.ToolSpec{Type: toolTypeHTTP, Endpoint: "http://example.invalid"},
+				Spec:       corev1alpha1.ToolSpec{Type: toolTypeHTTP, Endpoint: testToolEndpoint},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, tool))).To(Succeed())
 
