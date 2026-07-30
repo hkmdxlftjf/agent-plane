@@ -1,0 +1,61 @@
+# Policy guardrails for the travel-planner sample, demonstrating both halves of
+# enforcement:
+#
+#   * The Operator refuses to run an Agent whose *declared* references are
+#     denied. Point travel-agent at a model outside models.allow below and it
+#     goes Degraded with reason PolicyViolation — no runtime ever fetches a
+#     config for it.
+#
+#   * The runtime enforces what is only knowable at call time. hotel-search may
+#     be called at most twice per conversation; a third call is refused and the
+#     reason is handed back to the model, which can explain itself instead of
+#     the run failing.
+#
+# Apply on top of travel-agent.yaml, then attach them:
+#
+#   kubectl patch agent travel-agent --type merge -p \
+#     '{"spec":{"policyRefs":[{"name":"travel-guardrails"}],
+#               "toolPolicyRefs":[{"name":"travel-tool-limits"}]}}'
+#
+# Watch the effect on the control-plane side:
+#
+#   kubectl get agent travel-agent -o jsonpath='{.status.conditions}' | jq
+#
+# and on the data-plane side (the runtime logs its effective policy at startup):
+#
+#   go run ./cmd/agent-runtime --namespace <ns> --name travel-agent --chat
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Policy
+metadata:
+  name: travel-guardrails
+spec:
+  # An allow list is exhaustive: only llm-model may be used. Deny always beats
+  # allow, and merging another Policy can only narrow this further.
+  models:
+    allow: ["llm-model"]
+  # The agent may reach its own tools and nothing else.
+  tools:
+    allow: ["attraction-search", "hotel-search", "weather"]
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: ToolPolicy
+metadata:
+  name: travel-tool-limits
+spec:
+  # Rules are consulted in order, except that an exact tool-name match anywhere
+  # beats an earlier "*" wildcard — so a catch-all deny can sit at the top.
+  rules:
+    - tool: "*"
+      action: deny
+    - tool: attraction-search
+      action: allow
+    - tool: weather
+      action: allow
+    - tool: hotel-search
+      action: allow
+      # A per-session cap is a call-time concern, so it does NOT keep the Agent
+      # out of Ready: the runtime counts the calls and refuses the third one.
+      maxCallsPerSession: 2
+  # Applies to any tool no rule matches. With the "*" deny above this is
+  # redundant, but it is the safer default to state explicitly.
+  defaultAction: deny

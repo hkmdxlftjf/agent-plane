@@ -60,18 +60,22 @@ Resources.
 | **PromptTemplate** | Versioned system/role prompts and few-shot examples. |
 | **Memory** | A memory/storage backend (redis/postgres/vector/graph/s3). |
 | **KnowledgeBase** | A retrieval corpus (RAG). |
-| **Policy** | Coarse allow/deny over models/memory/mcp/tools/workflows. |
-| **ToolPolicy** | Fine-grained per-Tool authorization and rate limits. |
+| **Policy** | Coarse allow/deny over models/memory/mcp/tools/workflows. Enforced: the Operator refuses to run an Agent whose refs are denied. |
+| **ToolPolicy** | Per-Tool authorization and per-session call caps. Enforced by the runtime at call time. |
 | **Credential** | Indirects secret material through a Kubernetes Secret. |
 
 ### The two reference controllers
 
 - **`AgentReconciler`** — the *aggregating* pattern. Resolves every reference an
   Agent declares; if any is missing, marks the Agent `Degraded` with reason
-  `ReferenceNotFound`. Otherwise computes a stable `resolvedConfigHash` over all
-  resolved references (so runtimes/Registry can detect drift) and marks the
-  Agent `Ready`. Watches all referenceable kinds so a change to a dependency
-  re-reconciles the Agents that use it.
+  `ReferenceNotFound`. If everything exists but a referenced **Policy** forbids
+  one of them, marks it `Degraded` with reason `PolicyViolation` — reported on a
+  separate `PolicyCompliant` condition, so "the Model is missing" stays
+  distinguishable from "the Model exists but this Agent may not use it".
+  Otherwise computes a stable `resolvedConfigHash` over all resolved references
+  (so runtimes/Registry can detect drift) and marks the Agent `Ready`. Watches
+  all referenceable kinds so a change to a dependency re-reconciles the Agents
+  that use it.
 - **`MCPServerReconciler`** — the *resource-owning* pattern. Creates and owns a
   `Deployment` + `Service` for each MCPServer via `CreateOrUpdate` +
   `SetControllerReference`, and reflects availability into status.
@@ -83,6 +87,12 @@ Policy, PromptTemplate) check internal consistency. Each watches the kinds it
 depends on, so the reference graph converges automatically — a resource stuck
 `Degraded` on a missing dependency flips to `Ready` as soon as that dependency
 is created.
+
+Policy and ToolPolicy have no workload of their own, so their controllers only
+publish readiness — but the rules are *not* inert. `AgentReconciler` merges the
+policies each Agent references and refuses to run it if its declaration is
+forbidden; the Registry ships the same merged view to runtimes, which enforce the
+call-time half. See **[docs/usage.md](docs/usage.md)** §12.
 
 ## Getting started
 
@@ -137,7 +147,8 @@ Point it at a deployed Agent and it:
    **KnowledgeBases**, and
 4. runs a **tool-calling loop**: the model requests a tool, the runtime invokes
    it over **MCP JSON-RPC** (or plain HTTP), feeds the result back, and returns
-   the answer.
+   the answer — refusing any call its **Policy**/**ToolPolicy** forbids, and
+   handing the reason to the model rather than failing the run.
 
 ```sh
 # operator + in-cluster Registry deployed first; needs an LLM key in the Model's Secret.
@@ -201,6 +212,8 @@ in `config/registry/`. See **[docs/usage.md](docs/usage.md)** §8 and
 - Multi-tenant scoping (Namespace / Cluster / Tenant)
 - Metrics dashboards and tracing wiring
 - Reference runtime integrations (LangGraph, Agents SDK, CrewAI)
+- `Skill.allowedTools` is declared but not yet enforced (unlike Policy/ToolPolicy,
+  which are — see docs/usage.md §12)
 
 ## License
 

@@ -69,6 +69,11 @@ const (
 	// ConditionResolved indicates that all references declared by a resource
 	// (e.g. an Agent's Model/Tool/Workflow refs) resolved to existing objects.
 	ConditionResolved = "Resolved"
+	// ConditionPolicyCompliant indicates that the references a resource declares
+	// are permitted by the Policies it is subject to. It is reported separately
+	// from Resolved so an operator can tell "the Model does not exist" apart from
+	// "the Model exists but this Agent may not use it".
+	ConditionPolicyCompliant = "PolicyCompliant"
 )
 
 // Condition reasons used across Agent Plane resources.
@@ -79,4 +84,7 @@ const (
 	ReasonCreateFailed     = "CreateFailed"
 	ReasonInvalidSpec      = "InvalidSpec"
 	ReasonSecretMissing    = "SecretNotFound"
+	// ReasonPolicyViolation marks a resource whose declared references are
+	// denied by a Policy it references.
+	ReasonPolicyViolation = "PolicyViolation"
 )

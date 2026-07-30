@@ -39,6 +39,7 @@ import (
 	sdk "github.com/hkmdxlftjf/agent-plane-sdk-go"
 	"github.com/hkmdxlftjf/agent-plane-sdk-go/agentloop"
 	"github.com/hkmdxlftjf/agent-plane-sdk-go/memory"
+	"github.com/hkmdxlftjf/agent-plane-sdk-go/policy"
 	"github.com/hkmdxlftjf/agent-plane-sdk-go/retriever"
 	"github.com/hkmdxlftjf/agent-plane-sdk-go/secrets"
 )
@@ -145,24 +146,45 @@ func main() {
 		base.LocalTools = map[string]agentloop.LocalTool{"load_skill": tool}
 	}
 
+	// Build the policy enforcer from the Registry-served view. The Operator has
+	// already refused to make this Agent Ready if its *declared* refs are denied;
+	// what is left is the call-time half, which only the runtime can do.
+	enf := policy.New(cfg.Policy)
+	if lines := enf.Describe(); len(lines) > 0 {
+		for _, line := range lines {
+			fmt.Printf("  policy: %s\n", line)
+		}
+	} else {
+		fmt.Println("  policy: none (no Policy/ToolPolicy referenced)")
+	}
+
 	// Web mode: serve a browser chat UI + HTTP API.
 	if serveMode {
-		serveHTTP(ctx, name, cfg, base, serveAddr, store, rag)
+		serveHTTP(ctx, name, cfg, base, serveAddr, store, rag, enf)
 		return
 	}
 
 	// Interactive chat: multi-turn REPL over stdin.
 	if chatMode {
-		chatREPL(ctx, name, base, store, rag)
+		chatREPL(ctx, name, base, store, rag, enf)
 		return
 	}
 
 	fmt.Printf("\n▶ Running agent loop (prompt: %q)\n", prompt)
-	answer, err := agentloop.Run(ctx, base, rag.Augment(ctx, prompt))
+	answer, err := agentloop.Run(ctx, withSessionGuard(base, enf), rag.Augment(ctx, prompt))
 	if err != nil {
 		fatal("agent loop", err)
 	}
 	fmt.Printf("\n✅ Final answer:\n%s\n", answer)
+}
+
+// withSessionGuard returns a copy of base carrying a guard bound to a *fresh*
+// enforcement session. Per-session call caps (maxCallsPerSession) are only
+// meaningful if each conversation gets its own counters, so every place that
+// starts a session must call this rather than sharing one guard.
+func withSessionGuard(base agentloop.Config, enf *policy.Enforcer) agentloop.Config {
+	base.ToolGuard = enf.Session().Guard
+	return base
 }
 
 // buildSystemPrompt composes the Registry-resolved PromptTemplate system text
@@ -289,8 +311,8 @@ func envOr(key, def string) string {
 // stdin. History is retained across turns; tool calls happen transparently. If
 // a memory store is configured, prior turns are restored on start and every
 // exchange is persisted.
-func chatREPL(ctx context.Context, name string, base agentloop.Config, store memory.Store, rag *retriever.Retriever) {
-	session := agentloop.NewSession(base)
+func chatREPL(ctx context.Context, name string, base agentloop.Config, store memory.Store, rag *retriever.Retriever, enf *policy.Enforcer) {
+	session := agentloop.NewSession(withSessionGuard(base, enf))
 	const sessionID = "cli"
 	if store != nil {
 		if turns, err := store.Load(ctx, sessionID); err == nil {
@@ -333,10 +355,12 @@ func chatREPL(ctx context.Context, name string, base agentloop.Config, store mem
 }
 
 // serveHTTP runs the web mode: a browser chat UI plus a small JSON API. Each
-// browser session (by X-Session id) gets its own multi-turn agentloop.Session.
+// browser session (by X-Session id) gets its own multi-turn agentloop.Session,
+// and with it its own policy enforcement session, so one chat exhausting a
+// tool's maxCallsPerSession budget does not starve another.
 // If a memory store is configured, a session's history is restored on first use
 // and every exchange is persisted under its session id.
-func serveHTTP(ctx context.Context, name string, cfg *sdk.AgentConfig, base agentloop.Config, addr string, store memory.Store, rag *retriever.Retriever) {
+func serveHTTP(ctx context.Context, name string, cfg *sdk.AgentConfig, base agentloop.Config, addr string, store memory.Store, rag *retriever.Retriever, enf *policy.Enforcer) {
 	var mu sync.Mutex
 	sessions := map[string]*agentloop.Session{}
 	getSession := func(reqCtx context.Context, id string) *agentloop.Session {
@@ -344,7 +368,7 @@ func serveHTTP(ctx context.Context, name string, cfg *sdk.AgentConfig, base agen
 		defer mu.Unlock()
 		s, ok := sessions[id]
 		if !ok {
-			s = agentloop.NewSession(base)
+			s = agentloop.NewSession(withSessionGuard(base, enf))
 			if store != nil {
 				if turns, err := store.Load(reqCtx, id); err == nil {
 					for _, t := range turns {
@@ -508,6 +532,13 @@ func applyConfig(ctx context.Context, sec *secrets.Reader, cfg *sdk.AgentConfig)
 	for _, m := range cfg.Memories {
 		memNames = append(memNames, fmt.Sprintf("%s(%s)", m.Name, m.Backend))
 	}
-	fmt.Printf("↻ hot-reload: phase=%s hash=%.12s model=%s keyLen=%d tools=%v skills=%v memories=%v\n",
-		cfg.Phase, cfg.ConfigHash, model, keyLen, toolNames, skillNames, memNames)
+	// Surface the policy too: a Policy edit changes the Agent's config hash, so
+	// it arrives here like any other change, and an operator watching this log
+	// should be able to see enforcement tighten or loosen.
+	policySummary := "none"
+	if lines := policy.New(cfg.Policy).Describe(); len(lines) > 0 {
+		policySummary = strings.Join(lines, "; ")
+	}
+	fmt.Printf("↻ hot-reload: phase=%s hash=%.12s model=%s keyLen=%d tools=%v skills=%v memories=%v policy=[%s]\n",
+		cfg.Phase, cfg.ConfigHash, model, keyLen, toolNames, skillNames, memNames, policySummary)
 }

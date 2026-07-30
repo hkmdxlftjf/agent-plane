@@ -413,6 +413,27 @@ spec:
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
+              toolPolicyRefs:
+                description: |-
+                  toolPolicyRefs lists ToolPolicies governing individual tool calls
+                  (per-tool allow/deny and per-session call caps). Where policyRefs is
+                  coarse, these are tool-specific; both are enforced by the runtime, which
+                  receives the merged result from the Registry.
+                items:
+                  description: |-
+                    LocalReference points at another Agent Plane resource by name, in the same
+                    namespace as the referring object. This is the primary composition primitive:
+                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                  properties:
+                    name:
+                      description: name is the metadata.name of the referenced resource.
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               toolRefs:
                 description: toolRefs lists individual Tools the agent may invoke.
                 items:

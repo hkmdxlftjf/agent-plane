@@ -2,4 +2,5 @@
 resources:
 - travel/travel-agent.yaml
 - travel/amap.yaml
+- travel/policy.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
