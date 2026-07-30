@@ -23,6 +23,7 @@ rules:
   - prompttemplates
   - memories
   - policies
+  - toolpolicies
   - agentclasses
   - knowledgebases
   - workflows

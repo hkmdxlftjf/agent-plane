@@ -26,8 +26,9 @@ and serves the resolved configuration to runtimes through the **Registry**.
 9. [Running the reference runtime](#9-running-the-reference-runtime)
 10. [Verification & testing](#10-verification--testing)
 11. [Tool vs Skill](#11-tool-vs-skill)
-12. [FAQ](#12-faq)
-13. [Repo layout](#13-repo-layout)
+12. [Policy enforcement](#12-policy-enforcement)
+13. [FAQ](#13-faq)
+14. [Repo layout](#14-repo-layout)
 
 ---
 
@@ -79,8 +80,8 @@ API group `core.hkmdxlftjf.io/v1alpha1`, all Namespaced.
 | **PromptTemplate** | pt | Versioned system/role prompts + few-shot. |
 | **Memory** | — | Memory/storage backend (redis/postgres/vector/graph/s3). |
 | **KnowledgeBase** | kb | Retrieval corpus (RAG). |
-| **Policy** | — | Coarse allow/deny over models/memory/mcp/tools/workflows. |
-| **ToolPolicy** | tp | Fine-grained per-Tool authorization and rate limits. |
+| **Policy** | — | Coarse allow/deny over models/memory/mcp/tools/workflows; enforced (see §11). |
+| **ToolPolicy** | tp | Per-Tool allow/deny and per-session call caps; enforced (see §11). |
 | **Credential** | cred | Indirects secret material through a K8s Secret (never inline). |
 
 Inspect: `kubectl get crd | grep agent-plane`, `kubectl explain agent.spec`.
@@ -337,7 +338,57 @@ whenever a skill is used (hence the runtime's `--max-steps` default of 8).
 
 ---
 
-## 12. FAQ
+## 12. Policy enforcement
+
+`Policy` and `ToolPolicy` are enforced in **two places**, because neither place
+can do the whole job alone.
+
+**Control plane (fail fast).** When an Agent's declared references are denied by
+a Policy it references, `AgentReconciler` marks it `Degraded` with reason
+`PolicyViolation` and clears `resolvedConfigHash` — so no runtime ever fetches a
+config for it. Everything the Agent *declares* is checked: `modelRef`,
+`workflowRef`, `memoryRefs`, `toolRefs`, the tools contributed by every
+`toolSetRefs` member, and the MCPServer behind each tool (so a ToolSet is not a
+way to smuggle a denied tool past policy). The result is reported on its own
+condition, separate from `Resolved`:
+
+```sh
+kubectl get agent my-agent -o jsonpath='{.status.conditions}' | jq
+# Resolved:        True   — every reference exists
+# PolicyCompliant: False  — …but a Policy forbids one of them
+# Ready:           False  (reason: PolicyViolation)
+```
+
+The distinction matters when debugging: `ReferenceNotFound` means "the Model does
+not exist", `PolicyViolation` means "it exists but this Agent may not use it".
+
+**Runtime (call time).** Which tool the model reaches for on a given turn, and how
+often, is invisible to the control plane. The Registry therefore ships the merged
+policy in the config's `policy` field and the runtime enforces it. In the
+reference runtime that is one line — the SDK's `policy` package supplies a guard
+matching `agentloop.Config.ToolGuard`:
+
+```go
+enf := policy.New(cfg.Policy)               // nil-safe: no policy => allow all
+base.ToolGuard = enf.Session().Guard        // one Session per conversation
+```
+
+A refused call is **not** a failed run: the reason goes back to the model as the
+tool result, so it can explain itself or choose another route rather than the
+request erroring out. `maxCallsPerSession` budgets are per conversation, so each
+chat gets its own; the runtime logs its effective policy at startup and on every
+hot reload.
+
+Merging is one-directional by design: **allow lists intersect, deny lists union,
+and deny always beats allow**, so attaching another Policy can only ever narrow
+what an Agent may do. An empty `allow` list means "allow what is not denied", not
+"allow nothing".
+
+See `config/samples/travel/policy.yaml` for a worked example of both halves.
+
+---
+
+## 13. FAQ
 
 **kubectl hits the wrong cluster?** Many shells `export KUBECONFIG=…` in their
 profile. Set it explicitly: `export KUBECONFIG=$HOME/.kube/config` (verify
@@ -362,7 +413,7 @@ the value is read by the runtime via its own RBAC.
 
 ---
 
-## 13. Repo layout
+## 14. Repo layout
 
 ```
 api/v1alpha1/           # 14 CRD types + shared types + structural validation (validation.go)

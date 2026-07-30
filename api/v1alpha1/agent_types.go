@@ -76,6 +76,14 @@ type AgentSpec struct {
 	// +listType=atomic
 	PolicyRefs []LocalReference `json:"policyRefs,omitempty"`
 
+	// toolPolicyRefs lists ToolPolicies governing individual tool calls
+	// (per-tool allow/deny and per-session call caps). Where policyRefs is
+	// coarse, these are tool-specific; both are enforced by the runtime, which
+	// receives the merged result from the Registry.
+	// +optional
+	// +listType=atomic
+	ToolPolicyRefs []LocalReference `json:"toolPolicyRefs,omitempty"`
+
 	// knowledgeBaseRefs lists KnowledgeBases the agent may retrieve from (RAG).
 	// +optional
 	// +listType=atomic
@@ -109,6 +117,9 @@ func ApplyClassDefaults(spec AgentSpec, class *AgentClass) AgentSpec {
 	}
 	if len(spec.PolicyRefs) == 0 && len(class.Spec.DefaultPolicyRefs) > 0 {
 		spec.PolicyRefs = class.Spec.DefaultPolicyRefs
+	}
+	if len(spec.ToolPolicyRefs) == 0 && len(class.Spec.DefaultToolPolicyRefs) > 0 {
+		spec.ToolPolicyRefs = class.Spec.DefaultToolPolicyRefs
 	}
 	return spec
 }

@@ -52,8 +52,8 @@ var _ = Describe("Model Controller", func() {
 						Namespace: nsDefault,
 					},
 					Spec: corev1alpha1.ModelSpec{
-						Provider:  "anthropic",
-						ModelName: "claude-opus-4-8",
+						Provider:  testProvider,
+						ModelName: testModelName,
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())

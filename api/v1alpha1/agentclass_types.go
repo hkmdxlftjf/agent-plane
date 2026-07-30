@@ -44,6 +44,12 @@ type AgentClassSpec struct {
 	// +optional
 	// +listType=atomic
 	DefaultPolicyRefs []LocalReference `json:"defaultPolicyRefs,omitempty"`
+
+	// defaultToolPolicyRefs are applied when an Agent of this class declares no
+	// toolPolicyRefs of its own.
+	// +optional
+	// +listType=atomic
+	DefaultToolPolicyRefs []LocalReference `json:"defaultToolPolicyRefs,omitempty"`
 }
 
 // AgentClassStatus is the observed state of an AgentClass.

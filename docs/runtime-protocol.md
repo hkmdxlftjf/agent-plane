@@ -130,7 +130,18 @@ is a complete runtime built on it.
       "secretName":     "kb-secret", // ← coordinates only, as above
       "secretKey":      "token"
     }
-  ]
+  ],
+
+  "policy": {                        // merged from policyRefs + toolPolicyRefs
+    "sources": ["Policy/guardrails", "ToolPolicy/tool-limits"],   // what it came from
+    "models":    { "allow": ["llm-model"] },      // allow/deny by CR name;
+    "tools":     { "deny":  ["delete-account"] }, //   deny always wins
+    "toolRules": [                                // per-tool, first match applies
+      { "tool": "refund", "action": "allow", "maxCallsPerSession": 2 },
+      { "tool": "*",      "action": "deny" }
+    ],
+    "defaultToolAction": "deny"       // when no toolRule matches
+  }
 }
 ```
 
@@ -167,6 +178,21 @@ Conventions:
   Secret coordinates. The reference runtime retrieves from `http`-source KBs
   (POST `{"query":…}` → context text prepended to the turn); other sources are
   declared but retrieval is left to a real runtime.
+- `policy` is the merge of every `policyRefs` Policy and `toolPolicyRefs`
+  ToolPolicy; absent when the Agent references neither. Merging only ever
+  *narrows*: allow lists intersect, deny lists union, and an explicit
+  `defaultToolAction: deny` in any ToolPolicy wins — so attaching another policy
+  cannot widen access. **Runtimes must enforce this.** The control plane already
+  refuses to make an Agent Ready when its *declared* references are denied (see
+  the `PolicyCompliant` condition), so a config you receive has passed that
+  check; what remains is the call-time half the control plane cannot see —
+  which tool the model reaches for on a given turn, and how many times. The SDK's
+  `policy` package implements it: `policy.New(cfg.Policy).Session().Guard` plugs
+  straight into `agentloop.Config.ToolGuard`. Two conventions worth matching in a
+  custom runtime: start one enforcement session per *conversation* (so
+  `maxCallsPerSession` budgets don't leak between chats), and return a refusal to
+  the model as a tool result rather than failing the run, so a policy tweak
+  doesn't read as an outage.
 - Semantics are append-only across versions; clients must ignore unknown fields
   (forward compatible).
 

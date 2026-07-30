@@ -373,7 +373,65 @@ func (s *server) buildConfigFrom(ctx context.Context, agent *corev1alpha1.Agent)
 		}
 		out.Knowledge = append(out.Knowledge, kv)
 	}
+	out.Policy = s.resolvePolicy(ctx, agent.Namespace, eff)
 	return out, nil
+}
+
+// resolvePolicy merges the Agent's Policies and ToolPolicies into the view the
+// runtime enforces. It uses the same MergePolicies the Operator uses to decide
+// whether the Agent may run at all, so the two halves of enforcement cannot
+// disagree about what a set of policies means. Returns nil when nothing is
+// constrained.
+func (s *server) resolvePolicy(ctx context.Context, ns string, eff corev1alpha1.AgentSpec) *sdk.Policy {
+	policies := make([]corev1alpha1.Policy, 0, len(eff.PolicyRefs))
+	toolPolicies := make([]corev1alpha1.ToolPolicy, 0, len(eff.ToolPolicyRefs))
+	for _, ref := range eff.PolicyRefs {
+		var p corev1alpha1.Policy
+		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: ref.Name}, &p); err != nil {
+			// A missing Policy already keeps the Agent out of Ready, so a runtime
+			// will not act on this config; log and carry on rather than failing the
+			// whole snapshot.
+			s.log.Error(err, "resolve policy", "policy", ref.Name)
+			continue
+		}
+		policies = append(policies, p)
+	}
+	for _, ref := range eff.ToolPolicyRefs {
+		var tp corev1alpha1.ToolPolicy
+		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: ref.Name}, &tp); err != nil {
+			s.log.Error(err, "resolve toolPolicy", "toolPolicy", ref.Name)
+			continue
+		}
+		toolPolicies = append(toolPolicies, tp)
+	}
+	merged := corev1alpha1.MergePolicies(policies, toolPolicies)
+	if merged == nil {
+		return nil
+	}
+	pv := &sdk.Policy{
+		Sources:           merged.Sources,
+		Models:            accessRuleView(merged.Models),
+		Memory:            accessRuleView(merged.Memory),
+		MCP:               accessRuleView(merged.MCP),
+		Tools:             accessRuleView(merged.Tools),
+		Workflows:         accessRuleView(merged.Workflows),
+		DefaultToolAction: string(merged.DefaultToolAction),
+	}
+	for _, r := range merged.ToolRules {
+		pv.ToolRules = append(pv.ToolRules, sdk.ToolRule{
+			Tool:               r.Tool,
+			Action:             string(r.Action),
+			MaxCallsPerSession: r.MaxCallsPerSession,
+		})
+	}
+	return pv
+}
+
+func accessRuleView(r *corev1alpha1.AccessRule) *sdk.AccessRule {
+	if r == nil {
+		return nil
+	}
+	return &sdk.AccessRule{Allow: r.Allow, Deny: r.Deny}
 }
 
 // resolveTool turns a Tool reference into a fully-resolved definition. For mcp
