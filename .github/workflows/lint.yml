@@ -17,7 +17,16 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Resolve the linter version from the Makefile
+        id: lint-version
+        # Single source of truth: the Makefile pin. Reading it here keeps a local
+        # `make lint` and this job on the same checks.
+        run: |
+          version="$(make --no-print-directory print-golangci-lint-version)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "golangci-lint ${version}"
+
       - name: Run linter
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.12.2
+          version: ${{ steps.lint-version.outputs.version }}

@@ -152,6 +152,17 @@ type AgentReferences struct {
 	MCPServers []string
 }
 
+// PolicySources names the Policy and ToolPolicy CRs this was merged from, or
+// nil when no policies apply. Safe on a nil receiver: MergePolicies returns nil
+// for an Agent that references none, and callers routinely log the sources
+// alongside a failure that may have had nothing to do with policy.
+func (e *EffectivePolicy) PolicySources() []string {
+	if e == nil {
+		return nil
+	}
+	return e.Sources
+}
+
 // Violations reports every way the given references breach this policy, as
 // human-readable strings suitable for a status condition message. An empty
 // result means the Agent's declaration is permitted — call-time behavior is

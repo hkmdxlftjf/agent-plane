@@ -54,7 +54,7 @@ Resources.
 | **Model** | A model endpoint (openai/anthropic/azure/ollama/vllm/openrouter/custom). |
 | **Tool** | A single executable capability the agent *calls* (http/grpc/mcp/wasm/plugin/container). |
 | **ToolSet** | A named bundle of Tools. |
-| **Skill** | A markdown instruction pack (SKILL.md-style) that teaches the agent *how* to do something; may declare `allowedTools`. |
+| **Skill** | A markdown instruction pack (SKILL.md-style) that teaches the agent *how* to do something; its `allowedTools` confine the agent once the skill is loaded. |
 | **MCPServer** | An MCP server; the Operator materializes it into a Deployment + Service. |
 | **Workflow** | Engine-neutral execution shape (planner/tool/reflect/finish). |
 | **PromptTemplate** | Versioned system/role prompts and few-shot examples. |
@@ -212,8 +212,6 @@ in `config/registry/`. See **[docs/usage.md](docs/usage.md)** §8 and
 - Multi-tenant scoping (Namespace / Cluster / Tenant)
 - Metrics dashboards and tracing wiring
 - Reference runtime integrations (LangGraph, Agents SDK, CrewAI)
-- `Skill.allowedTools` is declared but not yet enforced (unlike Policy/ToolPolicy,
-  which are — see docs/usage.md §12)
 
 ## License
 

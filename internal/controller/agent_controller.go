@@ -76,6 +76,9 @@ type resolution struct {
 	// and each Tool's MCPServer included, so a capability reached indirectly is
 	// policed the same as a directly referenced one.
 	declared corev1alpha1.AgentReferences
+	// skillScopes are the tool restrictions the referenced Skills declare, checked
+	// against the Agent's tool surface for coherence.
+	skillScopes []corev1alpha1.SkillToolScope
 }
 
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agents,verbs=get;list;watch;create;update;patch;delete
@@ -132,13 +135,19 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// ever fetches a config for it. The call-time half (which tool this turn,
 	// how many times) is enforced by the runtime.
 	policy := corev1alpha1.MergePolicies(res.policies, res.toolPolicies)
-	if violations := policy.Violations(res.declared); len(violations) > 0 {
+	violations := policy.Violations(res.declared)
+	// A Skill that allows a tool the Agent cannot reach is broken on its face: its
+	// instructions would send the model after something uncallable. Reported
+	// alongside policy violations because the operator's fix is the same shape —
+	// edit a declaration — and both mean "exists, but incoherent".
+	violations = append(violations, corev1alpha1.SkillToolViolations(res.skillScopes, res.declared.Tools)...)
+	if len(violations) > 0 {
 		agent.Status.Phase = corev1alpha1.AgentPhaseDegraded
 		agent.Status.ResolvedConfigHash = ""
-		msg := fmt.Sprintf("policy violations: %v (from %v)", violations, policy.Sources)
+		msg := violationMessage(violations, policy)
 		setCondition(&agent.Status.Conditions, corev1alpha1.ConditionPolicyCompliant, metav1.ConditionFalse, corev1alpha1.ReasonPolicyViolation, msg, agent.Generation)
 		setCondition(&agent.Status.Conditions, corev1alpha1.ConditionReady, metav1.ConditionFalse, corev1alpha1.ReasonPolicyViolation, msg, agent.Generation)
-		log.Info("agent violates its policies", "violations", violations, "sources", policy.Sources)
+		log.Info("agent declaration is not permitted", "violations", violations, "policySources", policy.PolicySources())
 		return ctrl.Result{}, r.Status().Update(ctx, &agent)
 	}
 	setCondition(&agent.Status.Conditions, corev1alpha1.ConditionPolicyCompliant, metav1.ConditionTrue, corev1alpha1.ReasonReconciled, policyCompliantMessage(policy), agent.Generation)
@@ -152,6 +161,17 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	setCondition(&agent.Status.Conditions, corev1alpha1.ConditionReady, metav1.ConditionTrue, corev1alpha1.ReasonReconciled, "agent configuration assembled", agent.Generation)
 
 	return ctrl.Result{}, r.Status().Update(ctx, &agent)
+}
+
+// violationMessage renders the refusal for a status condition. The Policy
+// sources are only cited when policies are actually in play — a Skill/tool
+// coherence failure on an Agent with no Policy would otherwise read as
+// "violations … (from [])".
+func violationMessage(violations []string, p *corev1alpha1.EffectivePolicy) string {
+	if p == nil || len(p.Sources) == 0 {
+		return fmt.Sprintf("declaration not permitted: %v", violations)
+	}
+	return fmt.Sprintf("declaration not permitted: %v (policies: %v)", violations, p.Sources)
 }
 
 // policyCompliantMessage distinguishes "checked against policies and passed"
@@ -247,6 +267,13 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 				res.policies = append(res.policies, *obj)
 			case *corev1alpha1.ToolPolicy:
 				res.toolPolicies = append(res.toolPolicies, *obj)
+			case *corev1alpha1.Skill:
+				if len(obj.Spec.AllowedTools) > 0 {
+					res.skillScopes = append(res.skillScopes, corev1alpha1.SkillToolScope{
+						Skill:        obj.Name,
+						AllowedTools: obj.Spec.AllowedTools,
+					})
+				}
 			}
 		case apierrors.IsNotFound(getErr):
 			res.missing = append(res.missing, fmt.Sprintf("%s/%s", t.kind, t.name))

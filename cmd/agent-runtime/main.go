@@ -139,12 +139,6 @@ func main() {
 		System: system, Tools: cfg.Tools, MaxSteps: maxSteps,
 		Logf: func(f string, a ...any) { fmt.Printf("  "+f+"\n", a...) },
 	}
-	// Register the in-process load_skill tool so the model can pull a skill's
-	// full instructions into context on demand (progressive disclosure). One
-	// registration covers all three modes below, which all build from base.
-	if tool, ok := loadSkillTool(cfg); ok {
-		base.LocalTools = map[string]agentloop.LocalTool{"load_skill": tool}
-	}
 
 	// Build the policy enforcer from the Registry-served view. The Operator has
 	// already refused to make this Agent Ready if its *declared* refs are denied;
@@ -166,24 +160,34 @@ func main() {
 
 	// Interactive chat: multi-turn REPL over stdin.
 	if chatMode {
-		chatREPL(ctx, name, base, store, rag, enf)
+		chatREPL(ctx, name, cfg, base, store, rag, enf)
 		return
 	}
 
 	fmt.Printf("\n▶ Running agent loop (prompt: %q)\n", prompt)
-	answer, err := agentloop.Run(ctx, withSessionGuard(base, enf), rag.Augment(ctx, prompt))
+	answer, err := agentloop.Run(ctx, newSessionConfig(base, cfg, enf), rag.Augment(ctx, prompt))
 	if err != nil {
 		fatal("agent loop", err)
 	}
 	fmt.Printf("\n✅ Final answer:\n%s\n", answer)
 }
 
-// withSessionGuard returns a copy of base carrying a guard bound to a *fresh*
-// enforcement session. Per-session call caps (maxCallsPerSession) are only
-// meaningful if each conversation gets its own counters, so every place that
-// starts a session must call this rather than sharing one guard.
-func withSessionGuard(base agentloop.Config, enf *policy.Enforcer) agentloop.Config {
-	base.ToolGuard = enf.Session().Guard
+// newSessionConfig returns a copy of base wired to a *fresh* enforcement
+// session: the tool guard and the load_skill tool both close over it.
+//
+// Both pieces of state are per-conversation, so this cannot be hoisted into the
+// shared base. Call caps (maxCallsPerSession) would otherwise be a single global
+// budget, and one chat loading a narrow skill would confine every other chat's
+// tool calls.
+func newSessionConfig(base agentloop.Config, cfg *sdk.AgentConfig, enf *policy.Enforcer) agentloop.Config {
+	sess := enf.Session()
+	base.ToolGuard = sess.Guard
+	// Register the in-process load_skill tool so the model can pull a skill's full
+	// instructions into context on demand (progressive disclosure). Loading a
+	// skill that declares allowedTools also narrows what this session may call.
+	if tool, ok := loadSkillTool(cfg, sess); ok {
+		base.LocalTools = map[string]agentloop.LocalTool{"load_skill": tool}
+	}
 	return base
 }
 
@@ -221,20 +225,22 @@ func buildSystemPrompt(cfg *sdk.AgentConfig, logf func(string, ...any)) string {
 
 // loadSkillTool builds the in-process load_skill tool. It serves a named Skill's
 // full instructions from the Registry-resolved config on demand, so skill bodies
-// enter the model context only when the model asks for them. The second return
-// is false when the Agent has no loadable skill, in which case the tool should
-// not be registered.
-func loadSkillTool(cfg *sdk.AgentConfig) (agentloop.LocalTool, bool) {
-	bodies := make(map[string]string, len(cfg.Skills))
+// enter the model context only when the model asks for them. Loading a skill that
+// declares allowedTools also narrows what the session may call from then on,
+// which is why the tool is bound to a policy session. The second return is false
+// when the Agent has no loadable skill, in which case the tool should not be
+// registered.
+func loadSkillTool(cfg *sdk.AgentConfig, sess *policy.Session) (agentloop.LocalTool, bool) {
+	skills := make(map[string]sdk.Skill, len(cfg.Skills))
 	names := make([]string, 0, len(cfg.Skills))
 	for _, sk := range cfg.Skills {
 		if sk.Content == "" {
 			continue
 		}
-		bodies[sk.Name] = sk.Content
+		skills[sk.Name] = sk
 		names = append(names, sk.Name)
 	}
-	if len(bodies) == 0 {
+	if len(skills) == 0 {
 		return agentloop.LocalTool{}, false
 	}
 	return agentloop.LocalTool{
@@ -247,12 +253,21 @@ func loadSkillTool(cfg *sdk.AgentConfig) (agentloop.LocalTool, bool) {
 				Name string `json:"name"`
 			}
 			_ = json.Unmarshal([]byte(argsJSON), &args)
-			if body, ok := bodies[args.Name]; ok {
-				return body, nil
+			sk, ok := skills[args.Name]
+			if !ok {
+				// Return (not error) so the model can retry with a valid name.
+				return fmt.Sprintf("no such skill %q; available skills: %s",
+					args.Name, strings.Join(names, ", ")), nil
 			}
-			// Return (not error) so the model can retry with a valid name.
-			return fmt.Sprintf("no such skill %q; available skills: %s",
-				args.Name, strings.Join(names, ", ")), nil
+			// Record the disclosure *before* returning the body: from the model's
+			// next tool call onwards, this skill's allowedTools constrain the session.
+			if sess != nil {
+				sess.NoteSkillLoaded(sk.Name, sk.AllowedTools)
+				if tools, scoped := sess.ScopedTools(); scoped {
+					fmt.Printf("  skill %q loaded; tools now confined to %v\n", sk.Name, tools)
+				}
+			}
+			return sk.Content, nil
 		},
 	}, true
 }
@@ -311,8 +326,8 @@ func envOr(key, def string) string {
 // stdin. History is retained across turns; tool calls happen transparently. If
 // a memory store is configured, prior turns are restored on start and every
 // exchange is persisted.
-func chatREPL(ctx context.Context, name string, base agentloop.Config, store memory.Store, rag *retriever.Retriever, enf *policy.Enforcer) {
-	session := agentloop.NewSession(withSessionGuard(base, enf))
+func chatREPL(ctx context.Context, name string, cfg *sdk.AgentConfig, base agentloop.Config, store memory.Store, rag *retriever.Retriever, enf *policy.Enforcer) {
+	session := agentloop.NewSession(newSessionConfig(base, cfg, enf))
 	const sessionID = "cli"
 	if store != nil {
 		if turns, err := store.Load(ctx, sessionID); err == nil {
@@ -368,7 +383,7 @@ func serveHTTP(ctx context.Context, name string, cfg *sdk.AgentConfig, base agen
 		defer mu.Unlock()
 		s, ok := sessions[id]
 		if !ok {
-			s = agentloop.NewSession(withSessionGuard(base, enf))
+			s = agentloop.NewSession(newSessionConfig(base, cfg, enf))
 			if store != nil {
 				if turns, err := store.Load(reqCtx, id); err == nil {
 					for _, t := range turns {

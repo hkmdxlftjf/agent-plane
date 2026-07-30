@@ -15,7 +15,8 @@
 #
 #   kubectl patch agent travel-agent --type merge -p \
 #     '{"spec":{"policyRefs":[{"name":"travel-guardrails"}],
-#               "toolPolicyRefs":[{"name":"travel-tool-limits"}]}}'
+#               "toolPolicyRefs":[{"name":"travel-tool-limits"}],
+#               "skillRefs":[{"name":"hotel-booking"}]}}'
 #
 # Watch the effect on the control-plane side:
 #
@@ -59,3 +60,32 @@ spec:
   # Applies to any tool no rule matches. With the "*" deny above this is
   # redundant, but it is the safer default to state explicitly.
   defaultAction: deny
+---
+# A Skill demonstrating the third, *dynamic* dimension: allowedTools. While this
+# skill is unloaded it constrains nothing. Once the model calls
+# load_skill("hotel-booking"), the session's tool calls are confined to the
+# tools listed here — so after loading it, attraction-search is refused.
+#
+# The tools named here must be ones the Agent references, otherwise the Operator
+# refuses the Agent: a skill body pointing at an uncallable tool is broken, and
+# failing at apply time beats failing mid-conversation.
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Skill
+metadata:
+  name: hotel-booking
+spec:
+  description: How to pick and book a hotel for an itinerary
+  version: "1.0.0"
+  allowedTools:
+    - hotel-search
+    - weather
+  content: |
+    # Hotel booking
+
+    1. Call `hotel-search` for the destination city, passing the traveller's
+       comfort tier.
+    2. Check `weather` for the stay dates — a rainy forecast favours hotels
+       closer to indoor attractions.
+    3. Present at most three options with price, district and why each fits.
+
+    Do not book anything without confirming the choice with the traveller.

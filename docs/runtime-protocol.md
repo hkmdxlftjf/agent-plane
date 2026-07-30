@@ -105,9 +105,10 @@ is a complete runtime built on it.
 
   "skills": [                        // markdown instruction packs, content resolved
     {                                //   from Skill.spec.content or its ConfigMap
-      "name":        "refund-handling",
-      "description": "How to process refunds",
-      "content":     "# Refund policy\n…"    // runtime serves this on demand (load_skill)
+      "name":         "refund-handling",
+      "description":  "How to process refunds",
+      "content":      "# Refund policy\n…",   // runtime serves this on demand (load_skill)
+      "allowedTools": ["refund"]              // confines tool calls once loaded
     }
   ],
 
@@ -170,6 +171,16 @@ Conventions:
   body through an in-process `load_skill` tool when the model asks for it, keeping
   the prompt size independent of the number of skills. Inlining is still a valid
   runtime choice — the payload is the same either way.
+- `skills[].allowedTools` is a *narrowing* signal tied to disclosure: once a
+  runtime hands a skill's body to the model, it should confine subsequent tool
+  calls to the union of the loaded skills' `allowedTools`. Empty means the skill
+  restricts nothing, which is the common case — treat absent and empty alike, and
+  do not read "no entries" as "no tools permitted". A skill can only narrow: a
+  tool the Agent never referenced, or that `policy` denies, must stay unreachable
+  even if a loaded skill names it, or writing a Skill becomes a way to escalate
+  past a Policy. The control plane rejects an Agent whose Skill allows a tool the
+  Agent does not reference, so a config you receive is already coherent. The SDK's
+  `policy.Session.NoteSkillLoaded` implements this.
 - `memories[]` carries only backend + Secret coordinates. As with `model`, the
   Registry never serves the connection value — the runtime reads the Secret and
   connects itself. Only `redis` is implemented in the reference runtime today;

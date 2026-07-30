@@ -467,7 +467,14 @@ func (s *server) resolveSkill(ctx context.Context, ns, name string) (sdk.Skill, 
 	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &skill); err != nil {
 		return sdk.Skill{}, err
 	}
-	sv := sdk.Skill{Name: skill.Name, Description: skill.Spec.Description, Content: skill.Spec.Content}
+	sv := sdk.Skill{
+		Name:        skill.Name,
+		Description: skill.Spec.Description,
+		Content:     skill.Spec.Content,
+		// Shipped so the runtime can confine tool calls once this skill's body has
+		// been disclosed to the model (see the SDK's policy.Session.NoteSkillLoaded).
+		AllowedTools: skill.Spec.AllowedTools,
+	}
 	if sv.Content == "" && skill.Spec.ContentConfigMapRef != nil {
 		ref := skill.Spec.ContentConfigMapRef
 		var cm corev1.ConfigMap
