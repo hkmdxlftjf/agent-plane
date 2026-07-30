@@ -40,6 +40,11 @@ const (
 	modelGPT4   = "gpt-4"
 	toolRefund  = "refund"
 	toolLookup  = "lookup"
+
+	// Expected fragments of violation messages, shared by the policy and skill
+	// scope tests.
+	wantToolRefundQuoted = `tool "refund"`
+	skillRefunds         = "refunds"
 )
 
 // No policies means nothing to enforce, and callers rely on nil to skip the
@@ -229,7 +234,7 @@ func TestViolations(t *testing.T) {
 				Rules: []ToolRule{{Tool: toolRefund, Action: ToolActionDeny}},
 			})}),
 			refs:     AgentReferences{Tools: []string{toolRefund}},
-			wantSubs: []string{`tool "refund" is denied by a ToolPolicy rule`},
+			wantSubs: []string{wantToolRefundQuoted + " is denied by a ToolPolicy rule"},
 		},
 		{
 			name: "tool unreachable under default deny",
@@ -276,7 +281,7 @@ func TestViolations(t *testing.T) {
 				Tools:  &AccessRule{Deny: []string{toolRefund}},
 			})}, nil),
 			refs:     AgentReferences{Model: modelGPT4, Tools: []string{toolRefund}},
-			wantSubs: []string{`model "gpt-4"`, `tool "refund"`},
+			wantSubs: []string{`model "gpt-4"`, wantToolRefundQuoted},
 		},
 		{
 			name:     "empty refs never violate",

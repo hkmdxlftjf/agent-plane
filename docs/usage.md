@@ -26,7 +26,7 @@ and serves the resolved configuration to runtimes through the **Registry**.
 9. [Running the reference runtime](#9-running-the-reference-runtime)
 10. [Verification & testing](#10-verification--testing)
 11. [Tool vs Skill](#11-tool-vs-skill)
-12. [Policy enforcement](#12-policy-enforcement)
+12. [Authorization: Policy, ToolPolicy, and skill scope](#12-authorization-policy-toolpolicy-and-skill-scope)
 13. [FAQ](#13-faq)
 14. [Repo layout](#14-repo-layout)
 
@@ -74,14 +74,14 @@ API group `core.hkmdxlftjf.io/v1alpha1`, all Namespaced.
 | **Model** | — | Model endpoint (openai/anthropic/azure/ollama/vllm/openrouter/custom). |
 | **Tool** | — | A capability the agent **calls** (http/grpc/mcp/wasm/plugin/container). |
 | **ToolSet** | ss | A named bundle of Tools. |
-| **Skill** | — | A markdown instruction pack (SKILL.md-style); teaches the agent *how*; may declare `allowedTools`. |
+| **Skill** | — | A markdown instruction pack (SKILL.md-style); teaches the agent *how*; its `allowedTools` confine tool calls once loaded (see §12). |
 | **MCPServer** | mcp | An MCP server; Operator materializes it into a Deployment+Service. |
 | **Workflow** | wf | Engine-neutral execution shape (planner/tool/reflect/finish). |
 | **PromptTemplate** | pt | Versioned system/role prompts + few-shot. |
 | **Memory** | — | Memory/storage backend (redis/postgres/vector/graph/s3). |
 | **KnowledgeBase** | kb | Retrieval corpus (RAG). |
-| **Policy** | — | Coarse allow/deny over models/memory/mcp/tools/workflows; enforced (see §11). |
-| **ToolPolicy** | tp | Per-Tool allow/deny and per-session call caps; enforced (see §11). |
+| **Policy** | — | Coarse allow/deny over models/memory/mcp/tools/workflows; enforced (see §12). |
+| **ToolPolicy** | tp | Per-Tool allow/deny and per-session call caps; enforced (see §12). |
 | **Credential** | cred | Indirects secret material through a K8s Secret (never inline). |
 
 Inspect: `kubectl get crd | grep agent-plane`, `kubectl explain agent.spec`.
@@ -336,9 +336,15 @@ a task actually needs it. So mounting ten skills costs ten catalog lines per tur
 rather than ten full instruction packs, at the price of one extra tool-calling turn
 whenever a skill is used (hence the runtime's `--max-steps` default of 8).
 
+Loading a skill can also *narrow* what the agent may call. If a Skill declares
+`allowedTools`, then from the moment its body is disclosed the session's tool
+calls are confined to the union of the loaded skills' `allowedTools` — the model
+has been told how to do something, and that instruction carries the tools it may
+use. A Skill declaring none restricts nothing, which is the common case. See §12.
+
 ---
 
-## 12. Policy enforcement
+## 12. Authorization: Policy, ToolPolicy, and skill scope
 
 `Policy` and `ToolPolicy` are enforced in **two places**, because neither place
 can do the whole job alone.
@@ -362,15 +368,20 @@ kubectl get agent my-agent -o jsonpath='{.status.conditions}' | jq
 The distinction matters when debugging: `ReferenceNotFound` means "the Model does
 not exist", `PolicyViolation` means "it exists but this Agent may not use it".
 
-**Runtime (call time).** Which tool the model reaches for on a given turn, and how
-often, is invisible to the control plane. The Registry therefore ships the merged
-policy in the config's `policy` field and the runtime enforces it. In the
-reference runtime that is one line — the SDK's `policy` package supplies a guard
-matching `agentloop.Config.ToolGuard`:
+The same gate catches an incoherent Skill: if a Skill's `allowedTools` names a
+Tool the Agent does not reference, the Agent is refused here rather than failing
+mid-conversation with a puzzling refusal.
+
+**Runtime (call time).** Which tool the model reaches for on a given turn, how
+often, and which Skills it has loaded, are invisible to the control plane. The
+Registry therefore ships the merged policy in the config's `policy` field and the
+runtime enforces it. In the reference runtime that is one line — the SDK's
+`policy` package supplies a guard matching `agentloop.Config.ToolGuard`:
 
 ```go
 enf := policy.New(cfg.Policy)               // nil-safe: no policy => allow all
-base.ToolGuard = enf.Session().Guard        // one Session per conversation
+sess := enf.Session()                       // one Session per conversation
+base.ToolGuard = sess.Guard
 ```
 
 A refused call is **not** a failed run: the reason goes back to the model as the
@@ -384,7 +395,28 @@ and deny always beats allow**, so attaching another Policy can only ever narrow
 what an Agent may do. An empty `allow` list means "allow what is not denied", not
 "allow nothing".
 
-See `config/samples/travel/policy.yaml` for a worked example of both halves.
+### Skill scope (`allowedTools`)
+
+A third, *dynamic* dimension sits inside the session. When the model calls
+`load_skill`, the runtime reports the disclosure to the enforcer:
+
+```go
+sess.NoteSkillLoaded(skill.Name, skill.AllowedTools)
+```
+
+From then on the session's tool calls are confined to the union of the loaded
+skills' `allowedTools`. Three properties are worth knowing:
+
+- **A skill declaring no `allowedTools` restricts nothing.** "No restriction" and
+  "restricted to nothing" are different states; the scope stays absent until a
+  restricting skill loads.
+- **A skill can only narrow.** A tool a Policy denies stays denied even if a
+  loaded skill lists it — otherwise writing a Skill would be a way to escalate
+  past a Policy.
+- **Loads union, they don't intersect.** Two instruction packs each legitimately
+  need their own tools, so loading a second skill never breaks the first.
+
+See `config/samples/travel/policy.yaml` for a worked example.
 
 ---
 

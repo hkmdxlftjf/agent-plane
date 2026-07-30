@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -225,5 +226,78 @@ func TestResolvePolicyHonorsAgentClassDefaults(t *testing.T) {
 	}
 	if cfg.Policy.DefaultToolAction != string(corev1alpha1.ToolActionDeny) {
 		t.Errorf("DefaultToolAction = %q, want the class ToolPolicy's deny", cfg.Policy.DefaultToolAction)
+	}
+}
+
+// The Registry must ship allowedTools: without it the runtime cannot confine
+// tool calls after a skill loads, and the field would be inert again.
+func TestResolveSkillServesAllowedTools(t *testing.T) {
+	s := testServer(t, &corev1alpha1.Skill{
+		ObjectMeta: metav1.ObjectMeta{Name: "refunds", Namespace: testNS},
+		Spec: corev1alpha1.SkillSpec{
+			Description:  "process a refund",
+			Content:      "STEP 1 …",
+			AllowedTools: []string{toolRefund, "order-lookup"},
+		},
+	})
+
+	got, err := s.resolveSkill(context.Background(), testNS, "refunds")
+	if err != nil {
+		t.Fatalf("resolveSkill: %v", err)
+	}
+	if strings.Join(got.AllowedTools, ",") != toolRefund+",order-lookup" {
+		t.Errorf("AllowedTools = %v", got.AllowedTools)
+	}
+	if got.Content != "STEP 1 …" {
+		t.Errorf("Content = %q", got.Content)
+	}
+}
+
+// A skill that restricts nothing must serve an empty list, not a phantom
+// restriction.
+func TestResolveSkillWithoutAllowedTools(t *testing.T) {
+	s := testServer(t, &corev1alpha1.Skill{
+		ObjectMeta: metav1.ObjectMeta{Name: "prose", Namespace: testNS},
+		Spec:       corev1alpha1.SkillSpec{Description: "advice", Content: "just prose"},
+	})
+
+	got, err := s.resolveSkill(context.Background(), testNS, "prose")
+	if err != nil {
+		t.Fatalf("resolveSkill: %v", err)
+	}
+	if len(got.AllowedTools) != 0 {
+		t.Errorf("AllowedTools = %v, want empty", got.AllowedTools)
+	}
+}
+
+// A ConfigMap-sourced body must still carry allowedTools — the restriction lives
+// on the Skill, not in the body.
+func TestResolveSkillFromConfigMapKeepsAllowedTools(t *testing.T) {
+	s := testServer(t,
+		&corev1alpha1.Skill{
+			ObjectMeta: metav1.ObjectMeta{Name: "big", Namespace: testNS},
+			Spec: corev1alpha1.SkillSpec{
+				Description: "a large skill",
+				ContentConfigMapRef: &corev1alpha1.ConfigMapKeyReference{
+					Name: "skill-cm", Key: "SKILL.md",
+				},
+				AllowedTools: []string{toolRefund},
+			},
+		},
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "skill-cm", Namespace: testNS},
+			Data:       map[string]string{"SKILL.md": "# from configmap"},
+		},
+	)
+
+	got, err := s.resolveSkill(context.Background(), testNS, "big")
+	if err != nil {
+		t.Fatalf("resolveSkill: %v", err)
+	}
+	if got.Content != "# from configmap" {
+		t.Errorf("Content = %q, want the ConfigMap body", got.Content)
+	}
+	if len(got.AllowedTools) != 1 || got.AllowedTools[0] != toolRefund {
+		t.Errorf("AllowedTools = %v", got.AllowedTools)
 	}
 }

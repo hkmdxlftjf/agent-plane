@@ -339,6 +339,158 @@ var _ = Describe("Agent Controller", func() {
 		})
 	})
 
+	// A Skill whose allowedTools names a tool the Agent cannot reach is broken on
+	// its face: the skill body would send the model after something uncallable,
+	// and without this check the failure surfaces only mid-conversation.
+	Context("When a Skill allows a tool the Agent does not reference", func() {
+		const (
+			resourceName = "test-agent-skill-scope"
+			modelName    = "test-agent-skill-model"
+			toolName     = "test-agent-skill-tool"
+			skillName    = "test-agent-skill-broken"
+		)
+
+		ctx := context.Background()
+		agentKey := types.NamespacedName{Name: resourceName, Namespace: nsDefault}
+
+		BeforeEach(func() {
+			model := &corev1alpha1.Model{
+				ObjectMeta: metav1.ObjectMeta{Name: modelName, Namespace: nsDefault},
+				Spec:       corev1alpha1.ModelSpec{Provider: testProvider, ModelName: testModelName},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, model))).To(Succeed())
+
+			tool := &corev1alpha1.Tool{
+				ObjectMeta: metav1.ObjectMeta{Name: toolName, Namespace: nsDefault},
+				Spec:       corev1alpha1.ToolSpec{Type: toolTypeHTTP, Endpoint: testToolEndpoint},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, tool))).To(Succeed())
+
+			skill := &corev1alpha1.Skill{
+				ObjectMeta: metav1.ObjectMeta{Name: skillName, Namespace: nsDefault},
+				Spec: corev1alpha1.SkillSpec{
+					Description: "a skill pointing at a tool the Agent lacks",
+					Content:     "do the thing",
+					// The Agent references toolName, not this one.
+					AllowedTools: []string{"tool-the-agent-lacks"},
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, skill))).To(Succeed())
+
+			agent := &corev1alpha1.Agent{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: nsDefault},
+				Spec: corev1alpha1.AgentSpec{
+					ModelRef:  &corev1alpha1.LocalReference{Name: modelName},
+					ToolRefs:  []corev1alpha1.LocalReference{{Name: toolName}},
+					SkillRefs: []corev1alpha1.LocalReference{{Name: skillName}},
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
+		})
+
+		AfterEach(func() {
+			deleteIfExists(ctx, agentKey, &corev1alpha1.Agent{})
+			deleteIfExists(ctx, types.NamespacedName{Name: modelName, Namespace: nsDefault}, &corev1alpha1.Model{})
+			deleteIfExists(ctx, types.NamespacedName{Name: toolName, Namespace: nsDefault}, &corev1alpha1.Tool{})
+			deleteIfExists(ctx, types.NamespacedName{Name: skillName, Namespace: nsDefault}, &corev1alpha1.Skill{})
+		})
+
+		It("marks the Agent Degraded and names the skill and tool", func() {
+			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			agent := &corev1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, agentKey, agent)).To(Succeed())
+			Expect(agent.Status.Phase).To(Equal(corev1alpha1.AgentPhaseDegraded))
+			Expect(agent.Status.ResolvedConfigHash).To(BeEmpty())
+
+			ready := meta.FindStatusCondition(agent.Status.Conditions, corev1alpha1.ConditionReady)
+			Expect(ready).NotTo(BeNil())
+			Expect(ready.Reason).To(Equal(corev1alpha1.ReasonPolicyViolation))
+			Expect(ready.Message).To(ContainSubstring(skillName))
+			Expect(ready.Message).To(ContainSubstring("tool-the-agent-lacks"))
+			// No Policy is involved, so the message must not trail an empty
+			// "(policies: [])" — the refusal should read as what it is.
+			Expect(ready.Message).NotTo(ContainSubstring("policies:"))
+		})
+	})
+
+	// The mirror case: a Skill whose allowedTools the Agent does reference is
+	// coherent, including when the tool arrives via a ToolSet.
+	Context("When a Skill allows a tool the Agent reaches through a ToolSet", func() {
+		const (
+			resourceName = "test-agent-skill-ok"
+			modelName    = "test-agent-skill-ok-model"
+			toolName     = "test-agent-skill-ok-tool"
+			toolSetName  = "test-agent-skill-ok-set"
+			skillName    = "test-agent-skill-ok-skill"
+		)
+
+		ctx := context.Background()
+		agentKey := types.NamespacedName{Name: resourceName, Namespace: nsDefault}
+
+		BeforeEach(func() {
+			model := &corev1alpha1.Model{
+				ObjectMeta: metav1.ObjectMeta{Name: modelName, Namespace: nsDefault},
+				Spec:       corev1alpha1.ModelSpec{Provider: testProvider, ModelName: testModelName},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, model))).To(Succeed())
+
+			tool := &corev1alpha1.Tool{
+				ObjectMeta: metav1.ObjectMeta{Name: toolName, Namespace: nsDefault},
+				Spec:       corev1alpha1.ToolSpec{Type: toolTypeHTTP, Endpoint: testToolEndpoint},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, tool))).To(Succeed())
+
+			ts := &corev1alpha1.ToolSet{
+				ObjectMeta: metav1.ObjectMeta{Name: toolSetName, Namespace: nsDefault},
+				Spec: corev1alpha1.ToolSetSpec{
+					ToolRefs: []corev1alpha1.LocalReference{{Name: toolName}},
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, ts))).To(Succeed())
+
+			skill := &corev1alpha1.Skill{
+				ObjectMeta: metav1.ObjectMeta{Name: skillName, Namespace: nsDefault},
+				Spec: corev1alpha1.SkillSpec{
+					Description:  "a coherent skill",
+					Content:      "do the thing",
+					AllowedTools: []string{toolName},
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, skill))).To(Succeed())
+
+			agent := &corev1alpha1.Agent{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: nsDefault},
+				Spec: corev1alpha1.AgentSpec{
+					ModelRef:    &corev1alpha1.LocalReference{Name: modelName},
+					ToolSetRefs: []corev1alpha1.LocalReference{{Name: toolSetName}},
+					SkillRefs:   []corev1alpha1.LocalReference{{Name: skillName}},
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
+		})
+
+		AfterEach(func() {
+			deleteIfExists(ctx, agentKey, &corev1alpha1.Agent{})
+			deleteIfExists(ctx, types.NamespacedName{Name: modelName, Namespace: nsDefault}, &corev1alpha1.Model{})
+			deleteIfExists(ctx, types.NamespacedName{Name: toolName, Namespace: nsDefault}, &corev1alpha1.Tool{})
+			deleteIfExists(ctx, types.NamespacedName{Name: toolSetName, Namespace: nsDefault}, &corev1alpha1.ToolSet{})
+			deleteIfExists(ctx, types.NamespacedName{Name: skillName, Namespace: nsDefault}, &corev1alpha1.Skill{})
+		})
+
+		It("marks the Agent Ready", func() {
+			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			agent := &corev1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, agentKey, agent)).To(Succeed())
+			Expect(agent.Status.Phase).To(Equal(corev1alpha1.AgentPhaseReady))
+		})
+	})
+
 	// A tool reached through a ToolSet must be policed like a direct toolRef,
 	// otherwise a ToolSet is a trivial way to smuggle a denied tool past policy.
 	Context("When a denied tool is reached indirectly through a ToolSet", func() {
