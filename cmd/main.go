@@ -173,6 +173,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// One context for index registration and the manager run, so a shutdown
+	// signal during startup cancels both.
+	ctx := ctrl.SetupSignalHandler()
+
+	// Reference field indexes must be registered before any controller starts:
+	// the watches below map a changed dependency back to its referrers through
+	// them, and an unregistered index makes those lookups match nothing.
+	if err := controller.SetupFieldIndexes(ctx, mgr); err != nil {
+		setupLog.Error(err, "unable to set up field indexes")
+		os.Exit(1)
+	}
+
 	if err := (&controller.AgentReconciler{
 		Client:      mgr.GetClient(),
 		Scheme:      mgr.GetScheme(),
@@ -305,7 +317,7 @@ func main() {
 	}
 
 	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}

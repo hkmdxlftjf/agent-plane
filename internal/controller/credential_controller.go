@@ -97,7 +97,8 @@ func (r *CredentialReconciler) setSecretStatus(cred *corev1alpha1.Credential, fo
 func (r *CredentialReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.Credential{}).
-		Watches(&corev1.Secret{}, enqueueReferrers(r.Client, func() client.ObjectList { return &corev1alpha1.CredentialList{} })).
+		Watches(&corev1.Secret{},
+			enqueueByIndex(r.Client, func() client.ObjectList { return &corev1alpha1.CredentialList{} }, idxCredentialSecret)).
 		Named("credential").
 		Complete(r)
 }

@@ -31,6 +31,10 @@ const (
 	portNameMCP     = "mcp"
 	secretKeyAPIKey = "api-key"
 	nsDefault       = "default"
+
+	// Skill.status.contentSource values.
+	contentSourceInline    = "inline"
+	contentSourceConfigMap = "configMap"
 )
 
 // Fixture literals shared across the controller tests.
@@ -38,4 +42,6 @@ const (
 	testProvider     = "anthropic"
 	testModelName    = "claude-opus-4-8"
 	testToolEndpoint = "http://example.invalid"
+	testSkillCMKey   = "SKILL.md"
+	testToolSetName  = "bundle"
 )

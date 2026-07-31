@@ -61,7 +61,7 @@ var _ = Describe("Skill Controller", func() {
 
 			skill := &corev1alpha1.Skill{}
 			Expect(k8sClient.Get(ctx, skillKey, skill)).To(Succeed())
-			Expect(skill.Status.ContentSource).To(Equal("inline"))
+			Expect(skill.Status.ContentSource).To(Equal(contentSourceInline))
 			Expect(meta.IsStatusConditionTrue(skill.Status.Conditions, corev1alpha1.ConditionReady)).To(BeTrue())
 			Expect(skill.Status.ObservedGeneration).To(Equal(skill.Generation))
 		})
@@ -73,7 +73,7 @@ var _ = Describe("Skill Controller", func() {
 		const (
 			resourceName = "test-skill-configmap"
 			cmName       = "test-skill-cm"
-			cmKey        = "SKILL.md"
+			cmKey        = testSkillCMKey
 		)
 		skillKey := types.NamespacedName{Name: resourceName, Namespace: nsDefault}
 		cmObjKey := types.NamespacedName{Name: cmName, Namespace: nsDefault}
@@ -107,7 +107,7 @@ var _ = Describe("Skill Controller", func() {
 			Expect(k8sClient.Get(ctx, skillKey, skill)).To(Succeed())
 			// contentSource records the *intent* even while unresolved, so an
 			// operator can see which path is being waited on.
-			Expect(skill.Status.ContentSource).To(Equal("configMap"))
+			Expect(skill.Status.ContentSource).To(Equal(contentSourceConfigMap))
 			cond := meta.FindStatusCondition(skill.Status.Conditions, corev1alpha1.ConditionReady)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
@@ -150,7 +150,7 @@ var _ = Describe("Skill Controller", func() {
 				Spec: corev1alpha1.SkillSpec{
 					Description: "points at a missing key",
 					ContentConfigMapRef: &corev1alpha1.ConfigMapKeyReference{
-						Name: cmName, Key: "SKILL.md",
+						Name: cmName, Key: testSkillCMKey,
 					},
 				},
 			}
@@ -173,7 +173,7 @@ var _ = Describe("Skill Controller", func() {
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(corev1alpha1.ReasonReferenceMissing))
-			Expect(cond.Message).To(ContainSubstring("SKILL.md"))
+			Expect(cond.Message).To(ContainSubstring(testSkillCMKey))
 		})
 	})
 
@@ -192,7 +192,7 @@ var _ = Describe("Skill Controller", func() {
 				Spec: corev1alpha1.SkillSpec{
 					Description:         "contradictory",
 					Content:             "# inline",
-					ContentConfigMapRef: &corev1alpha1.ConfigMapKeyReference{Name: cmName, Key: "SKILL.md"},
+					ContentConfigMapRef: &corev1alpha1.ConfigMapKeyReference{Name: cmName, Key: testSkillCMKey},
 				},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, skill))).To(Succeed())

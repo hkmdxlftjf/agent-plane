@@ -72,12 +72,12 @@ func (r *KnowledgeBaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *KnowledgeBaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	referrers := enqueueReferrers(r.Client, func() client.ObjectList { return &corev1alpha1.KnowledgeBaseList{} })
+	kbs := func() client.ObjectList { return &corev1alpha1.KnowledgeBaseList{} }
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.KnowledgeBase{}).
-		Watches(&corev1alpha1.Model{}, referrers).
-		Watches(&corev1alpha1.Memory{}, referrers).
-		Watches(&corev1alpha1.Credential{}, referrers).
+		Watches(&corev1alpha1.Model{}, enqueueByIndex(r.Client, kbs, idxKBModel)).
+		Watches(&corev1alpha1.Memory{}, enqueueByIndex(r.Client, kbs, idxKBMemory)).
+		Watches(&corev1alpha1.Credential{}, enqueueByIndex(r.Client, kbs, idxKBCredential)).
 		Named("knowledgebase").
 		Complete(r)
 }

@@ -88,6 +88,13 @@ depends on, so the reference graph converges automatically — a resource stuck
 `Degraded` on a missing dependency flips to `Ready` as soon as that dependency
 is created.
 
+Those watches are **reference-precise**: field indexes (`SetupFieldIndexes`) map
+a changed dependency back to just the resources naming it, rather than every
+resource in the namespace. Two indirect routes are followed explicitly, since
+missing them would drop events rather than merely waste work — an Agent
+inheriting a `modelRef` from its AgentClass, and a Tool reaching an Agent
+through a ToolSet.
+
 Policy and ToolPolicy have no workload of their own, so their controllers only
 publish readiness — but the rules are *not* inert. `AgentReconciler` merges the
 policies each Agent references and refuses to run it if its declaration is
@@ -207,8 +214,8 @@ in `config/registry/`. See **[docs/usage.md](docs/usage.md)** §8 and
 
 - Registry gRPC transport and event-bus fan-out (HTTP + SSE are implemented)
 - Defaulting / conversion webhooks (validating webhooks are implemented)
-- Reference-precise (field-indexed) re-reconciliation instead of the current
-  namespace-coarse dependency watches; scoped Secret watching for Credential
+- Narrowing the manager's Secret/ConfigMap *cache* (enqueue is already
+  reference-precise; the informer still watches them cluster-wide)
 - Multi-tenant scoping (Namespace / Cluster / Tenant)
 - Metrics dashboards and tracing wiring
 - Reference runtime integrations (LangGraph, Agents SDK, CrewAI)

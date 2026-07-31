@@ -68,7 +68,8 @@ func (r *MemoryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 func (r *MemoryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.Memory{}).
-		Watches(&corev1alpha1.Credential{}, enqueueReferrers(r.Client, func() client.ObjectList { return &corev1alpha1.MemoryList{} })).
+		Watches(&corev1alpha1.Credential{},
+			enqueueByIndex(r.Client, func() client.ObjectList { return &corev1alpha1.MemoryList{} }, idxMemoryConnection)).
 		Named("memory").
 		Complete(r)
 }

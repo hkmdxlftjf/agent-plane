@@ -34,9 +34,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1alpha1 "github.com/hkmdxlftjf/agent-plane/api/v1alpha1"
 )
@@ -357,44 +355,48 @@ func setCondition(conds *[]metav1.Condition, condType string, status metav1.Cond
 // watches the referenceable kinds so that a change to a Model/Tool/etc.
 // re-reconciles the Agents that reference it (the "recompute runtime config on
 // dependency change" behavior from the lifecycle design).
+//
+// Each watch is reference-precise: a field index maps the changed dependency
+// back to just the Agents that use it. Two routes reach an Agent without it
+// naming the dependency directly, and both are followed explicitly —
+// inheritance from an AgentClass default, and expansion of a ToolSet into its
+// member Tools. Missing either would silently drop events, which is worse than
+// the namespace-wide fan-out this replaces.
+//
+// SetupFieldIndexes must have run on this manager first.
 func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.Agent{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		Watches(&corev1alpha1.Model{}, handler.EnqueueRequestsFromMapFunc(r.agentsReferencing)).
-		Watches(&corev1alpha1.Workflow{}, handler.EnqueueRequestsFromMapFunc(r.agentsReferencing)).
-		Watches(&corev1alpha1.PromptTemplate{}, handler.EnqueueRequestsFromMapFunc(r.agentsReferencing)).
-		Watches(&corev1alpha1.Tool{}, handler.EnqueueRequestsFromMapFunc(r.agentsReferencing)).
-		Watches(&corev1alpha1.ToolSet{}, handler.EnqueueRequestsFromMapFunc(r.agentsReferencing)).
-		Watches(&corev1alpha1.Skill{}, handler.EnqueueRequestsFromMapFunc(r.agentsReferencing)).
-		Watches(&corev1alpha1.Memory{}, handler.EnqueueRequestsFromMapFunc(r.agentsReferencing)).
-		Watches(&corev1alpha1.Policy{}, handler.EnqueueRequestsFromMapFunc(r.agentsReferencing)).
-		Watches(&corev1alpha1.ToolPolicy{}, handler.EnqueueRequestsFromMapFunc(r.agentsReferencing)).
-		Watches(&corev1alpha1.KnowledgeBase{}, handler.EnqueueRequestsFromMapFunc(r.agentsReferencing)).
-		Watches(&corev1alpha1.AgentClass{}, handler.EnqueueRequestsFromMapFunc(r.agentsReferencing)).
+		// Model/Workflow/Prompt/Policy can be inherited from an AgentClass, so each
+		// also consults the matching class index.
+		Watches(&corev1alpha1.Model{},
+			r.agentsReferencingIndexed([]string{idxAgentModel}, []string{idxClassModel}, false)).
+		Watches(&corev1alpha1.Workflow{},
+			r.agentsReferencingIndexed([]string{idxAgentWorkflow}, []string{idxClassWorkflow}, false)).
+		Watches(&corev1alpha1.PromptTemplate{},
+			r.agentsReferencingIndexed([]string{idxAgentPrompt}, []string{idxClassPrompt}, false)).
+		Watches(&corev1alpha1.Policy{},
+			r.agentsReferencingIndexed([]string{idxAgentPolicies}, []string{idxClassPolicies}, false)).
+		// A Tool reaches an Agent directly or through a ToolSet.
+		Watches(&corev1alpha1.Tool{},
+			r.agentsReferencingIndexed([]string{idxAgentTools}, nil, true)).
+		Watches(&corev1alpha1.ToolSet{},
+			r.agentsReferencingIndexed([]string{idxAgentToolSets}, nil, false)).
+		// The rest are only ever referenced directly.
+		Watches(&corev1alpha1.Skill{},
+			r.agentsReferencingIndexed([]string{idxAgentSkills}, nil, false)).
+		Watches(&corev1alpha1.Memory{},
+			r.agentsReferencingIndexed([]string{idxAgentMemories}, nil, false)).
+		Watches(&corev1alpha1.ToolPolicy{},
+			r.agentsReferencingIndexed([]string{idxAgentToolPolicies}, nil, false)).
+		Watches(&corev1alpha1.KnowledgeBase{},
+			r.agentsReferencingIndexed([]string{idxAgentKnowledge}, nil, false)).
+		Watches(&corev1alpha1.AgentClass{},
+			r.agentsReferencingIndexed([]string{idxAgentClass}, nil, false)).
 		Named("agent").
 		Complete(r)
-}
-
-// agentsReferencing enqueues every Agent in the changed object's namespace.
-// This is intentionally coarse for the scaffold: reconciling an Agent whose
-// refs did not change is cheap (a few gets + a no-op status update) and avoids
-// maintaining a reverse index. A field-index optimization is a documented
-// follow-up.
-func (r *AgentReconciler) agentsReferencing(ctx context.Context, obj client.Object) []reconcile.Request {
-	var agents corev1alpha1.AgentList
-	if err := r.List(ctx, &agents, client.InNamespace(obj.GetNamespace())); err != nil {
-		return nil
-	}
-	reqs := make([]reconcile.Request, 0, len(agents.Items))
-	for i := range agents.Items {
-		reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{
-			Namespace: agents.Items[i].Namespace,
-			Name:      agents.Items[i].Name,
-		}})
-	}
-	return reqs
 }
 
 func agentRuntimeLabels(agent *corev1alpha1.Agent) map[string]string {

@@ -20,11 +20,8 @@ import (
 	"context"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // refTarget describes one reference to resolve during reconciliation: a kind
@@ -56,41 +53,4 @@ func resolveTargets(ctx context.Context, c client.Client, ns string, targets []r
 		}
 	}
 	return missing, nil
-}
-
-// enqueueReferrers builds an event handler that, when a watched dependency
-// changes, enqueues every resource of the owning kind in the same namespace.
-// newList must return a fresh, empty list of the owning kind (e.g.
-// func() client.ObjectList { return &corev1alpha1.ToolSetList{} }).
-//
-// The enqueue is intentionally namespace-coarse rather than
-// reference-precise: reconciling a resource whose references did not actually
-// change is cheap (a few gets + an idempotent status update), and it avoids
-// maintaining a reverse index. This mirrors the Agent controller's approach and
-// is what makes the reference graph converge — e.g. a ToolSet stuck Degraded
-// becomes Ready as soon as the missing Tool is created. A field-indexed,
-// reference-precise variant is a documented follow-up.
-func enqueueReferrers(c client.Client, newList func() client.ObjectList) handler.EventHandler {
-	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
-		list := newList()
-		if err := c.List(ctx, list, client.InNamespace(obj.GetNamespace())); err != nil {
-			return nil
-		}
-		items, err := meta.ExtractList(list)
-		if err != nil {
-			return nil
-		}
-		reqs := make([]reconcile.Request, 0, len(items))
-		for _, item := range items {
-			acc, err := meta.Accessor(item)
-			if err != nil {
-				continue
-			}
-			reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{
-				Namespace: acc.GetNamespace(),
-				Name:      acc.GetName(),
-			}})
-		}
-		return reqs
-	})
 }
