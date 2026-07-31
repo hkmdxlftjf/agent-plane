@@ -63,6 +63,9 @@ const (
 	idxKBCredential     = "spec.credentialRef"
 	idxSkillConfigMap   = "spec.contentConfigMapRef"
 	idxCredentialSecret = "spec.secretRef"
+
+	idxTriggerAgent      = "spec.agentRef"
+	idxTriggerCredential = "spec.credentialRef"
 )
 
 // refName returns the referenced name, or nil for an unset optional reference —
@@ -195,6 +198,15 @@ func indexSpecs() []indexSpec {
 				return []string{ref.Name}
 			}
 			return nil
+		}},
+		{&corev1alpha1.Trigger{}, idxTriggerAgent, func(o client.Object) []string {
+			if name := o.(*corev1alpha1.Trigger).Spec.AgentRef.Name; name != "" {
+				return []string{name}
+			}
+			return nil
+		}},
+		{&corev1alpha1.Trigger{}, idxTriggerCredential, func(o client.Object) []string {
+			return refName(o.(*corev1alpha1.Trigger).Spec.CredentialRef)
 		}},
 		{&corev1alpha1.Credential{}, idxCredentialSecret, func(o client.Object) []string {
 			if name := o.(*corev1alpha1.Credential).Spec.SecretRef.Name; name != "" {

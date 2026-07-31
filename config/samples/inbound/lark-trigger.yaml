@@ -1,0 +1,74 @@
+# Inbound event source: bringing IM messages into an Agent.
+#
+# Agent Plane implements no platform protocol. It schedules the adapter image you
+# supply and injects a fixed contract (docs/adapter-protocol.md); the adapter
+# owns the Lark/DingTalk/Slack connection and the reply call. Adding a platform
+# means a new adapter image and another Trigger — no control-plane change.
+#
+# This sample is NOT runnable as-is: myorg/lark-adapter:v1 is a placeholder for
+# an image you build against the contract. Everything around it is real.
+#
+# Prerequisites: the shared Model/Credential samples, and a Secret holding the
+# platform app credentials.
+#
+#   kubectl create secret generic lark-app \
+#     --from-literal=app-id=cli_xxx --from-literal=app-secret=yyy
+#   kubectl apply -f config/samples/inbound/lark-trigger.yaml -n <ns>
+#   kubectl get trigger lark-support
+#
+# Watch what the adapter was told to call:
+#
+#   kubectl get trigger lark-support -o jsonpath='{.status.agentEndpoint}'
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Credential
+metadata:
+  name: lark-app
+spec:
+  # The whole Secret is mounted into the adapter, so every key is available as a
+  # file under $AGENTPLANE_CREDENTIAL_PATH. This key is the one other consumers
+  # (and status reporting) treat as the primary.
+  secretRef:
+    name: lark-app
+    key: app-secret
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Agent
+metadata:
+  name: support-agent
+spec:
+  description: Support agent reachable from an IM platform.
+  modelRef:
+    name: llm-model
+  # An inbound adapter POSTs to the Agent's runtime, so the Agent must expose
+  # one. port is what makes the Operator create the Service; without it the
+  # Trigger goes Degraded rather than pointing the adapter at nothing.
+  runtime:
+    image: ghcr.io/hkmdxlftjf/agent-plane-runtime:latest
+    port: 8080
+    env:
+      # The image defaults to --watch; this switches it to serve mode, which is
+      # what exposes POST /api/chat.
+      - name: AGENTPLANE_SERVE
+        value: "1"
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Trigger
+metadata:
+  name: lark-support
+spec:
+  agentRef:
+    name: support-agent
+  # Replace with your own image built against docs/adapter-protocol.md.
+  image: myorg/lark-adapter:v1
+  credentialRef:
+    name: lark-app
+  # Passed through verbatim as AGENTPLANE_TRIGGER_CONFIG. The control plane does
+  # not interpret it — the shape is whatever your adapter reads.
+  config:
+    events:
+      - im.message.receive_v1
+  env:
+    - name: LOG_LEVEL
+      value: info
+  # replicas is capped at 1: most platforms deliver each event to every open
+  # connection, so a second replica answers every message twice.

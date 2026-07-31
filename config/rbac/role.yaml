@@ -53,6 +53,7 @@ rules:
   - toolpolicies
   - tools
   - toolsets
+  - triggers
   - workflows
   verbs:
   - create
@@ -78,6 +79,7 @@ rules:
   - toolpolicies/finalizers
   - tools/finalizers
   - toolsets/finalizers
+  - triggers/finalizers
   - workflows/finalizers
   verbs:
   - update
@@ -97,6 +99,7 @@ rules:
   - toolpolicies/status
   - tools/status
   - toolsets/status
+  - triggers/status
   - workflows/status
   verbs:
   - get

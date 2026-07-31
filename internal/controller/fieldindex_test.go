@@ -392,3 +392,48 @@ func TestEveryAgentDependencyKindIsIndexed(t *testing.T) {
 		})
 	}
 }
+
+// The Trigger indexes back its two watches: an Agent gaining a runtime port, or
+// a Credential changing, must re-reconcile the Triggers that point at them.
+func TestTriggerIndexes(t *testing.T) {
+	c := indexedClient(t,
+		&corev1alpha1.Trigger{
+			ObjectMeta: metav1.ObjectMeta{Name: testTriggerName, Namespace: nsDefault},
+			Spec: corev1alpha1.TriggerSpec{
+				AgentRef:      corev1alpha1.LocalReference{Name: "support"},
+				Image:         testAdapterImage,
+				CredentialRef: ref("lark-app"),
+			},
+		},
+		&corev1alpha1.Trigger{
+			ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: nsDefault},
+			Spec: corev1alpha1.TriggerSpec{
+				AgentRef: corev1alpha1.LocalReference{Name: "different-agent"},
+				Image:    testAdapterImage,
+			},
+		},
+	)
+	triggers := func() client.ObjectList { return &corev1alpha1.TriggerList{} }
+
+	byAgent := collect(t, enqueueByIndex(c, triggers, idxTriggerAgent), &corev1alpha1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "support", Namespace: nsDefault},
+	})
+	if len(byAgent) != 1 || byAgent[0] != testTriggerName {
+		t.Errorf("by agent: enqueued %v, want the referring trigger", byAgent)
+	}
+
+	byCred := collect(t, enqueueByIndex(c, triggers, idxTriggerCredential), &corev1alpha1.Credential{
+		ObjectMeta: metav1.ObjectMeta{Name: "lark-app", Namespace: nsDefault},
+	})
+	if len(byCred) != 1 || byCred[0] != testTriggerName {
+		t.Errorf("by credential: enqueued %v, want the referring trigger", byCred)
+	}
+
+	// A Trigger with no credentialRef must not be indexed under an empty key.
+	none := collect(t, enqueueByIndex(c, triggers, idxTriggerCredential), &corev1alpha1.Credential{
+		ObjectMeta: metav1.ObjectMeta{Name: "", Namespace: nsDefault},
+	})
+	if len(none) != 0 {
+		t.Errorf("empty credential name matched %v", none)
+	}
+}

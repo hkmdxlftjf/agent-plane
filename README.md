@@ -63,8 +63,9 @@ Resources.
 | **Policy** | Coarse allow/deny over models/memory/mcp/tools/workflows. Enforced: the Operator refuses to run an Agent whose refs are denied. |
 | **ToolPolicy** | Per-Tool authorization and per-session call caps. Enforced by the runtime at call time. |
 | **Credential** | Indirects secret material through a Kubernetes Secret. |
+| **Trigger** | An *inbound* event source (IM bot, webhook) feeding an Agent, run as an owned adapter Deployment. |
 
-### The two reference controllers
+### The reference controllers
 
 - **`AgentReconciler`** — the *aggregating* pattern. Resolves every reference an
   Agent declares; if any is missing, marks the Agent `Degraded` with reason
@@ -76,11 +77,15 @@ Resources.
   (so runtimes/Registry can detect drift) and marks the Agent `Ready`. Watches
   all referenceable kinds so a change to a dependency re-reconciles the Agents
   that use it.
+- **`TriggerReconciler`** — the same resource-owning pattern applied to *inbound*
+  events: it materializes the adapter Deployment for a Trigger and injects the
+  adapter contract, so bringing a new IM platform on board is an image plus a
+  YAML, not a control-plane change.
 - **`MCPServerReconciler`** — the *resource-owning* pattern. Creates and owns a
   `Deployment` + `Service` for each MCPServer via `CreateOrUpdate` +
   `SetControllerReference`, and reflects availability into status.
 
-The remaining 11 controllers follow the same two shapes: **reference-resolving**
+The remaining 12 controllers follow the same two shapes: **reference-resolving**
 (Model, Memory, Tool, ToolSet, Skill, KnowledgeBase, AgentClass, Credential) validate
 and resolve what they point at, and **validation-only** (Workflow, ToolPolicy,
 Policy, PromptTemplate) check internal consistency. Each watches the kinds it
@@ -201,6 +206,33 @@ Registry and hot-reloads on change. The reference image (`Dockerfile.agent-runti
 in `config/registry/`. See **[docs/usage.md](docs/usage.md)** §8 and
 **[docs/runtime-protocol.md](docs/runtime-protocol.md)** for the full contract.
 
+## Inbound events (`Trigger`)
+
+Tools are how an Agent calls *out*. A **Trigger** is the other direction: an IM
+bot or webhook bringing messages *in*.
+
+Agent Plane implements no platform protocol. You supply an adapter image; the
+Operator runs it as an owned Deployment, mounts its credentials, and injects the
+address of the Agent's runtime:
+
+```yaml
+kind: Trigger
+spec:
+  agentRef: {name: support-agent}
+  image: myorg/lark-adapter:v1       # swap for DingTalk, Slack, …
+  credentialRef: {name: lark-app}
+  config: {events: ["im.message.receive_v1"]}
+```
+
+The adapter connects to the platform, POSTs `{sessionId, message}` to
+`$AGENTPLANE_AGENT_ENDPOINT/api/chat`, and posts the answer back. Using the
+platform's conversation id as `sessionId` gives multi-turn memory for free.
+
+**Adding a platform is a new image and a new Trigger** — no control-plane
+change, which is the point of fixing a contract instead of building integrations
+in. See **[docs/adapter-protocol.md](docs/adapter-protocol.md)** and
+`config/samples/inbound/lark-trigger.yaml`.
+
 ## Documentation
 
 - **[docs/quickstart-custom-agent.md](docs/quickstart-custom-agent.md)** — zero-to-running
@@ -208,7 +240,11 @@ in `config/registry/`. See **[docs/usage.md](docs/usage.md)** §8 and
 - **[docs/usage.md](docs/usage.md)** — full usage guide (deploy, declarative &
   programmatic usage, data plane, runtime, FAQ).
 - **[docs/runtime-protocol.md](docs/runtime-protocol.md)** — the runtime
-  configuration & change-notification protocol (v1).
+  configuration & change-notification protocol (v1): config flowing *out* to a
+  runtime.
+- **[docs/adapter-protocol.md](docs/adapter-protocol.md)** — the inbound adapter
+  contract (v1): events flowing *in* from Lark/DingTalk/Slack/…. Implement it in
+  any language and your adapter runs under a `Trigger` unchanged.
 
 ## Roadmap (out of scope for this scaffold)
 

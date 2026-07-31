@@ -16,7 +16,7 @@ and serves the resolved configuration to runtimes through the **Registry**.
 ## Table of contents
 
 1. [Architecture](#1-architecture)
-2. [Resource model (14 CRDs)](#2-resource-model-14-crds)
+2. [Resource model (15 CRDs)](#2-resource-model-15-crds)
 3. [Prerequisites & deploy](#3-prerequisites--deploy)
 4. [Declarative usage: define an Agent in YAML](#4-declarative-usage-define-an-agent-in-yaml)
 5. [Programmatic usage: create an Agent in Go](#5-programmatic-usage-create-an-agent-in-go)
@@ -27,8 +27,9 @@ and serves the resolved configuration to runtimes through the **Registry**.
 10. [Verification & testing](#10-verification--testing)
 11. [Tool vs Skill](#11-tool-vs-skill)
 12. [Authorization: Policy, ToolPolicy, and skill scope](#12-authorization-policy-toolpolicy-and-skill-scope)
-13. [FAQ](#13-faq)
-14. [Repo layout](#14-repo-layout)
+13. [Inbound: IM bots and other event sources](#13-inbound-im-bots-and-other-event-sources)
+14. [FAQ](#14-faq)
+15. [Repo layout](#15-repo-layout)
 
 ---
 
@@ -75,7 +76,7 @@ such route and the mapper needs to know about it.
 
 ---
 
-## 2. Resource model (14 CRDs)
+## 2. Resource model (15 CRDs)
 
 API group `core.hkmdxlftjf.io/v1alpha1`, all Namespaced.
 
@@ -95,6 +96,7 @@ API group `core.hkmdxlftjf.io/v1alpha1`, all Namespaced.
 | **Policy** | — | Coarse allow/deny over models/memory/mcp/tools/workflows; enforced (see §12). |
 | **ToolPolicy** | tp | Per-Tool allow/deny and per-session call caps; enforced (see §12). |
 | **Credential** | cred | Indirects secret material through a K8s Secret (never inline). |
+| **Trigger** | trg | An inbound event source (IM bot, webhook) feeding an Agent; runs a BYO adapter image (see §13). |
 
 Inspect: `kubectl get crd | grep agent-plane`, `kubectl explain agent.spec`.
 
@@ -432,7 +434,50 @@ See `config/samples/travel/policy.yaml` for a worked example.
 
 ---
 
-## 13. FAQ
+## 13. Inbound: IM bots and other event sources
+
+Everything above is *outbound*: the Agent calls Tools. Receiving messages — a
+Lark or DingTalk bot, a webhook — is the other direction, and it is a `Trigger`.
+
+Agent Plane implements no platform protocol. You supply an adapter image; the
+Operator schedules it, mounts its credentials, and tells it where the Agent is:
+
+```yaml
+kind: Trigger
+spec:
+  agentRef: {name: support-agent}
+  image: myorg/lark-adapter:v1       # swap this for DingTalk, Slack, …
+  credentialRef: {name: lark-app}
+  config: {events: ["im.message.receive_v1"]}
+```
+
+The adapter does three things: connect to the platform, `POST
+$AGENTPLANE_AGENT_ENDPOINT/api/chat` with `{sessionId, message}`, and post the
+answer back. `sessionId` should be the platform's conversation id — the runtime
+keys memory on it, so a stable id gives multi-turn context for free and a shared
+one leaks history between chats.
+
+**Adding a platform is a new image and a new Trigger**, not a control-plane
+change. That is the whole point of fixing the contract instead of building
+integrations in.
+
+Two requirements worth stating plainly:
+
+- The Agent needs `spec.runtime` **with a port** — that is what creates the
+  Service the adapter POSTs to. Without it the Trigger reports `Degraded` saying
+  so, rather than injecting an address nothing listens on.
+- `replicas` is capped at 1. Most platforms deliver each event to every open
+  connection, so a second replica answers every message twice.
+
+`status.phase: Running` means the adapter pod is up — not that it authenticated
+with the platform, which only the adapter can know.
+
+Full contract: **[docs/adapter-protocol.md](adapter-protocol.md)**. Worked
+example: `config/samples/inbound/lark-trigger.yaml`.
+
+---
+
+## 14. FAQ
 
 **kubectl hits the wrong cluster?** Many shells `export KUBECONFIG=…` in their
 profile. Set it explicitly: `export KUBECONFIG=$HOME/.kube/config` (verify
@@ -457,7 +502,7 @@ the value is read by the runtime via its own RBAC.
 
 ---
 
-## 14. Repo layout
+## 15. Repo layout
 
 ```
 api/v1alpha1/           # 14 CRD types + shared types + structural validation (validation.go)

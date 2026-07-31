@@ -3,4 +3,5 @@ resources:
 - travel/travel-agent.yaml
 - travel/amap.yaml
 - travel/policy.yaml
+- inbound/lark-trigger.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
