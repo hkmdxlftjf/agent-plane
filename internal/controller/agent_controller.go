@@ -400,11 +400,7 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func agentRuntimeLabels(agent *corev1alpha1.Agent) map[string]string {
-	return map[string]string{
-		"app.kubernetes.io/name":       "agent-runtime",
-		"app.kubernetes.io/instance":   agent.Name,
-		"app.kubernetes.io/managed-by": "agent-plane",
-	}
+	return ownedLabels("agent-runtime", agent.Name)
 }
 
 // reconcileRuntime materializes the agent runtime as an owned Deployment (and

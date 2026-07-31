@@ -16,6 +16,7 @@ resources:
 - bases/core.hkmdxlftjf.io_policies.yaml
 - bases/core.hkmdxlftjf.io_toolpolicies.yaml
 - bases/core.hkmdxlftjf.io_credentials.yaml
+- bases/core.hkmdxlftjf.io_triggers.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

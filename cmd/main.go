@@ -277,6 +277,13 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ToolPolicy")
 		os.Exit(1)
 	}
+	if err := (&controller.TriggerReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Trigger")
+		os.Exit(1)
+	}
 	if err := (&controller.CredentialReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),

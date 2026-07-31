@@ -104,11 +104,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 
 func mcpLabels(mcp *corev1alpha1.MCPServer) map[string]string {
-	return map[string]string{
-		"app.kubernetes.io/name":       "mcpserver",
-		"app.kubernetes.io/instance":   mcp.Name,
-		"app.kubernetes.io/managed-by": "agent-plane",
-	}
+	return ownedLabels("mcpserver", mcp.Name)
 }
 
 func servicePort(mcp *corev1alpha1.MCPServer) int32 {

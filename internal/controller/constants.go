@@ -32,6 +32,12 @@ const (
 	secretKeyAPIKey = "api-key"
 	nsDefault       = "default"
 
+	// Standard Kubernetes labels applied to every workload the Operator owns.
+	labelName      = "app.kubernetes.io/name"
+	labelInstance  = "app.kubernetes.io/instance"
+	labelManagedBy = "app.kubernetes.io/managed-by"
+	managedByValue = "agent-plane"
+
 	// Skill.status.contentSource values.
 	contentSourceInline    = "inline"
 	contentSourceConfigMap = "configMap"
@@ -44,4 +50,15 @@ const (
 	testToolEndpoint = "http://example.invalid"
 	testSkillCMKey   = "SKILL.md"
 	testToolSetName  = "bundle"
+	testTriggerName  = "lark"
 )
+
+// ownedLabels is the label set for a workload the Operator materializes:
+// component identifies the kind of workload, instance the owning resource.
+func ownedLabels(component, instance string) map[string]string {
+	return map[string]string{
+		labelName:      component,
+		labelInstance:  instance,
+		labelManagedBy: managedByValue,
+	}
+}

@@ -16,7 +16,11 @@ limitations under the License.
 
 package v1alpha1
 
-import "fmt"
+import (
+	"fmt"
+
+	corev1 "k8s.io/api/core/v1"
+)
 
 // This file centralizes *structural* validation — invariants that are always
 // wrong regardless of what else exists in the cluster (duplicate names, dangling
@@ -113,6 +117,57 @@ func (s *SkillSpec) Validate() error {
 		return fmt.Errorf("one of spec.content or spec.contentConfigMapRef is required")
 	}
 	return nil
+}
+
+// Contract environment variable names injected into an adapter container. They
+// are exported because both the Operator (which sets them) and validation
+// (which forbids a Trigger from setting them) must agree, and an adapter author
+// reading the Go docs should see the exact strings.
+const (
+	EnvAgentEndpoint  = "AGENTPLANE_AGENT_ENDPOINT"
+	EnvCredentialPath = "AGENTPLANE_CREDENTIAL_PATH"
+)
+
+// ReservedTriggerEnv are the environment variables the Operator injects into an
+// adapter container. They are the adapter contract, so a Trigger may not set
+// them itself — silently overriding AGENTPLANE_AGENT_ENDPOINT would point the
+// adapter at the wrong Agent, which is far easier to debug at apply time than at
+// runtime.
+var ReservedTriggerEnv = []string{
+	EnvAgentEndpoint,
+	"AGENTPLANE_AGENT_NAME",
+	"AGENTPLANE_AGENT_NAMESPACE",
+	"AGENTPLANE_TRIGGER_NAME",
+	"AGENTPLANE_TRIGGER_CONFIG",
+	EnvCredentialPath,
+}
+
+// Validate reports the first structural problem in a TriggerSpec, or nil.
+func (s *TriggerSpec) Validate() error {
+	if s.AgentRef.Name == "" {
+		return fmt.Errorf("spec.agentRef.name is required")
+	}
+	reserved := make(map[string]bool, len(ReservedTriggerEnv))
+	for _, name := range ReservedTriggerEnv {
+		reserved[name] = true
+	}
+	for _, e := range s.Env {
+		if reserved[e.Name] {
+			return fmt.Errorf("spec.env may not set %q: it is injected by the Operator", e.Name)
+		}
+	}
+	if dup := firstDuplicate(envNames(s.Env)); dup != "" {
+		return fmt.Errorf("duplicate env var %q", dup)
+	}
+	return nil
+}
+
+func envNames(env []corev1.EnvVar) []string {
+	names := make([]string, len(env))
+	for i, e := range env {
+		names[i] = e.Name
+	}
+	return names
 }
 
 func refNames(refs []LocalReference) []string {
