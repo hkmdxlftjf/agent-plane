@@ -76,7 +76,8 @@ func (r *ToolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 func (r *ToolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.Tool{}).
-		Watches(&corev1alpha1.MCPServer{}, enqueueReferrers(r.Client, func() client.ObjectList { return &corev1alpha1.ToolList{} })).
+		Watches(&corev1alpha1.MCPServer{},
+			enqueueByIndex(r.Client, func() client.ObjectList { return &corev1alpha1.ToolList{} }, idxToolMCPServer)).
 		Named("tool").
 		Complete(r)
 }

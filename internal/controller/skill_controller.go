@@ -65,13 +65,13 @@ func (r *SkillReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// Inline body: immediately ready.
 	if skill.Spec.ContentConfigMapRef == nil {
-		skill.Status.ContentSource = "inline"
+		skill.Status.ContentSource = contentSourceInline
 		setCondition(&skill.Status.Conditions, corev1alpha1.ConditionReady, metav1.ConditionTrue, corev1alpha1.ReasonReconciled, "inline skill content", skill.Generation)
 		return ctrl.Result{}, r.Status().Update(ctx, &skill)
 	}
 
 	// ConfigMap-sourced body: verify the ConfigMap and key exist.
-	skill.Status.ContentSource = "configMap"
+	skill.Status.ContentSource = contentSourceConfigMap
 	ref := skill.Spec.ContentConfigMapRef
 	var cm corev1.ConfigMap
 	err := r.Get(ctx, types.NamespacedName{Namespace: skill.Namespace, Name: ref.Name}, &cm)
@@ -97,7 +97,7 @@ func (r *SkillReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 func (r *SkillReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.Skill{}).
-		Watches(&corev1.ConfigMap{}, enqueueReferrers(r.Client, func() client.ObjectList { return &corev1alpha1.SkillList{} })).
+		Watches(&corev1.ConfigMap{}, enqueueSkillsForConfigMap(r.Client)).
 		Named("skill").
 		Complete(r)
 }

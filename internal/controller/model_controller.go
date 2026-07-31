@@ -71,7 +71,8 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.Model{}).
-		Watches(&corev1alpha1.Credential{}, enqueueReferrers(r.Client, func() client.ObjectList { return &corev1alpha1.ModelList{} })).
+		Watches(&corev1alpha1.Credential{},
+			enqueueByIndex(r.Client, func() client.ObjectList { return &corev1alpha1.ModelList{} }, idxModelCredential)).
 		Named("model").
 		Complete(r)
 }

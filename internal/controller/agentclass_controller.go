@@ -77,13 +77,13 @@ func (r *AgentClassReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *AgentClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	referrers := enqueueReferrers(r.Client, func() client.ObjectList { return &corev1alpha1.AgentClassList{} })
+	classes := func() client.ObjectList { return &corev1alpha1.AgentClassList{} }
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.AgentClass{}).
-		Watches(&corev1alpha1.Model{}, referrers).
-		Watches(&corev1alpha1.Workflow{}, referrers).
-		Watches(&corev1alpha1.PromptTemplate{}, referrers).
-		Watches(&corev1alpha1.Policy{}, referrers).
+		Watches(&corev1alpha1.Model{}, enqueueByIndex(r.Client, classes, idxClassModel)).
+		Watches(&corev1alpha1.Workflow{}, enqueueByIndex(r.Client, classes, idxClassWorkflow)).
+		Watches(&corev1alpha1.PromptTemplate{}, enqueueByIndex(r.Client, classes, idxClassPrompt)).
+		Watches(&corev1alpha1.Policy{}, enqueueByIndex(r.Client, classes, idxClassPolicies)).
 		Named("agentclass").
 		Complete(r)
 }

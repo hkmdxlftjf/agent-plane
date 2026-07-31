@@ -70,7 +70,8 @@ func (r *ToolSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 func (r *ToolSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.ToolSet{}).
-		Watches(&corev1alpha1.Tool{}, enqueueReferrers(r.Client, func() client.ObjectList { return &corev1alpha1.ToolSetList{} })).
+		Watches(&corev1alpha1.Tool{},
+			enqueueByIndex(r.Client, func() client.ObjectList { return &corev1alpha1.ToolSetList{} }, idxToolSetTools)).
 		Named("toolset").
 		Complete(r)
 }

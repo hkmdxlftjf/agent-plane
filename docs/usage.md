@@ -61,6 +61,18 @@ and serves the resolved configuration to runtimes through the **Registry**.
 `resolvedConfigHash` → writes Agent status → Registry watches Agent and pushes
 via SSE → runtime compares hash and hot-reloads when it differs.
 
+**Dependency watches are reference-precise.** Changing a Model re-reconciles only
+the Agents that name it, via field indexes registered in
+`controller.SetupFieldIndexes` before the controllers start. If you add a
+reference field to a spec, add an index for it in `internal/controller/fieldindex.go`
+and wire the watch to it — a watch with no matching index silently stops
+re-reconciling, which looks like a resource that just never converges.
+
+Two routes reach a resource without it naming the dependency directly, and both
+are handled: an Agent inheriting `modelRef`/`workflowRef`/`promptRef`/`policyRefs`
+from its AgentClass, and a Tool reaching an Agent through a ToolSet. Add a third
+such route and the mapper needs to know about it.
+
 ---
 
 ## 2. Resource model (14 CRDs)
