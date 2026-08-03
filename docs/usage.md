@@ -86,7 +86,7 @@ API group `core.hkmdxlftjf.io/v1alpha1`, all Namespaced.
 | **Agent** | ag | Declares an agent as a set of references to capabilities (core). |
 | **AgentClass** | agc | Reusable defaults inherited by Agents. |
 | **Model** | — | Model endpoint (openai/anthropic/azure/ollama/vllm/openrouter/custom). |
-| **Tool** | — | A capability the agent **calls** (http/grpc/mcp/wasm/plugin/container). |
+| **Tool** | — | A capability the agent **calls**: `http`, or `mcp` backed by an MCPServer or a peer Agent (see §14). |
 | **ToolSet** | ss | A named bundle of Tools. |
 | **Skill** | — | A markdown instruction pack (SKILL.md-style); teaches the agent *how*; its `allowedTools` confine tool calls once loaded (see §12). |
 | **MCPServer** | mcp | An MCP server; Operator materializes it into a Deployment+Service. |

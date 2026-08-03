@@ -23,7 +23,14 @@ import (
 
 // ToolType enumerates how a Tool is invoked. Agent Plane only records the
 // contract; the runtime performs the actual call.
-// +kubebuilder:validation:Enum=http;grpc;mcp;wasm;plugin;container
+//
+// The enum lists what the platform actually resolves and what a runtime can
+// therefore be expected to call. grpc, wasm, plugin, and container were listed
+// here before any of them was implemented: such a Tool applied cleanly, its
+// Agent went Ready, and the failure surfaced only when a runtime tried to invoke
+// it. They are on the roadmap rather than in the enum until the Registry
+// resolves them.
+// +kubebuilder:validation:Enum=http;mcp
 type ToolType string
 
 // Tool type values that code branches on.
@@ -52,8 +59,9 @@ type ToolSpec struct {
 	// +optional
 	MCPToolName string `json:"mcpToolName,omitempty"`
 
-	// endpoint is the address the runtime uses to reach the tool. Its meaning
-	// depends on type (URL for http/grpc, image ref for container, etc.).
+	// endpoint is the address the runtime uses to reach the tool: the tool's own
+	// URL for type=http, and for type=mcp the fallback used when neither
+	// mcpServerRef nor agentRef resolves an in-cluster address.
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
 
