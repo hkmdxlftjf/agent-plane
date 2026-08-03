@@ -16,7 +16,7 @@
 # Requires: a Model named llm-model, and a Secret holding a git token:
 #   kubectl create secret generic git-token --from-literal=token=ghp_xxx
 #
-# NOT runnable as-is: myorg/claude-code-runner:v1 is a placeholder for an image
+# NOT runnable as-is: ghcr.io/hkmdxlftjf/agent-plane-claude-code-runner:latest is a placeholder for an image
 # that speaks the runtime protocol (docs/runtime-protocol.md) and drives the CLI.
 apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Credential
@@ -95,7 +95,7 @@ spec:
       name: git-token
     size: 20Gi
   runtime:
-    image: myorg/claude-code-runner:v1
+    image: ghcr.io/hkmdxlftjf/agent-plane-claude-code-runner:latest
     port: 8080
   # Publishing an MCP endpoint is what makes this Agent consultable. Write the
   # description for the *other* agent's model — it becomes the tool description
@@ -133,7 +133,7 @@ spec:
     credentialRef:
       name: git-token
   runtime:
-    image: myorg/claude-code-runner:v1
+    image: ghcr.io/hkmdxlftjf/agent-plane-claude-code-runner:latest
     port: 8080
   toolRefs:
     - name: ask-web-agent       # the declared cross-repository edge
@@ -153,5 +153,5 @@ spec:
     credentialRef:
       name: git-token
   runtime:
-    image: myorg/claude-code-runner:v1
+    image: ghcr.io/hkmdxlftjf/agent-plane-claude-code-runner:latest
     port: 8080
