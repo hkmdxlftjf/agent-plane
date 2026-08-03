@@ -50,6 +50,21 @@ type AgentClassSpec struct {
 	// +optional
 	// +listType=atomic
 	DefaultToolPolicyRefs []LocalReference `json:"defaultToolPolicyRefs,omitempty"`
+
+	// defaultToolRefs are applied when an Agent of this class declares no
+	// toolRefs of its own. A role's tools belong to the role, not to each
+	// individual Agent — a "tester" class can carry the tools testing needs so
+	// every Agent of that class gets them without repeating the list.
+	// +optional
+	// +listType=atomic
+	DefaultToolRefs []LocalReference `json:"defaultToolRefs,omitempty"`
+
+	// defaultSkillRefs are applied when an Agent of this class declares no
+	// skillRefs of its own, for the same reason as defaultToolRefs: a role's
+	// instruction packs describe the role.
+	// +optional
+	// +listType=atomic
+	DefaultSkillRefs []LocalReference `json:"defaultSkillRefs,omitempty"`
 }
 
 // AgentClassStatus is the observed state of an AgentClass.

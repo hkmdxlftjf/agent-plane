@@ -54,7 +54,7 @@ func servedAgent(name string, port int32) *corev1alpha1.Agent {
 	return &corev1alpha1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsDefault},
 		Spec: corev1alpha1.AgentSpec{
-			ModelRef: &corev1alpha1.LocalReference{Name: "any-model"},
+			ModelRef: &corev1alpha1.LocalReference{Name: testAnyModel},
 			Runtime: &corev1alpha1.AgentRuntimeSpec{
 				Image: "example/runtime:v1",
 				Port:  port,
@@ -195,7 +195,7 @@ var _ = Describe("Trigger Controller", func() {
 			agent := &corev1alpha1.Agent{
 				ObjectMeta: metav1.ObjectMeta{Name: agentName, Namespace: nsDefault},
 				// No spec.runtime at all.
-				Spec: corev1alpha1.AgentSpec{ModelRef: &corev1alpha1.LocalReference{Name: "any-model"}},
+				Spec: corev1alpha1.AgentSpec{ModelRef: &corev1alpha1.LocalReference{Name: testAnyModel}},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
 
@@ -344,7 +344,7 @@ var _ = Describe("Trigger Controller", func() {
 				Spec: corev1alpha1.TriggerSpec{
 					AgentRef:      corev1alpha1.LocalReference{Name: agentName},
 					Image:         testAdapterImage,
-					CredentialRef: &corev1alpha1.LocalReference{Name: "does-not-exist"},
+					CredentialRef: &corev1alpha1.LocalReference{Name: testMissingName},
 				},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, trigger))).To(Succeed())
@@ -366,7 +366,7 @@ var _ = Describe("Trigger Controller", func() {
 			Expect(trigger.Status.Phase).To(Equal(corev1alpha1.TriggerPhaseDegraded))
 			cond := meta.FindStatusCondition(trigger.Status.Conditions, corev1alpha1.ConditionReady)
 			Expect(cond.Reason).To(Equal(corev1alpha1.ReasonReferenceMissing))
-			Expect(cond.Message).To(ContainSubstring("does-not-exist"))
+			Expect(cond.Message).To(ContainSubstring(testMissingName))
 		})
 	})
 

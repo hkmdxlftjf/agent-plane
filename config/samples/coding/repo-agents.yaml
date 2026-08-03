@@ -1,0 +1,157 @@
+# Repository-bound coding agents: one Agent, one repo, one working tree.
+#
+# This is the shape a coding agent (Claude Code, Codex, OpenCode, …) runs in.
+# Each Agent owns a checkout on its own volume, so its branches and build cache
+# survive restarts, and no two agents ever write the same tree.
+#
+# Cross-repository work is a *declared edge*, not a shared mount: the api agent
+# references the web agent as a Tool. Because that edge is an ordinary Tool, the
+# authorization you already have governs it — deny the Tool in a ToolPolicy and
+# the link is severed, with no separate agent-to-agent permission model.
+#
+#   kubectl apply -f config/samples/coding/repo-agents.yaml -n <ns>
+#   kubectl get agents -o custom-columns=\
+#NAME:.metadata.name,PHASE:.status.phase,PEER:.status.peerEndpoint,TREE:.status.workspaceClaim
+#
+# Requires: a Model named llm-model, and a Secret holding a git token:
+#   kubectl create secret generic git-token --from-literal=token=ghp_xxx
+#
+# NOT runnable as-is: myorg/claude-code-runner:v1 is a placeholder for an image
+# that speaks the runtime protocol (docs/runtime-protocol.md) and drives the CLI.
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Credential
+metadata:
+  name: git-token
+spec:
+  secretRef:
+    name: git-token
+    key: token
+---
+# A role, reusable across repositories. Ten repos and four roles means four
+# AgentClasses and ten two-line Agents, not forty full configurations.
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: PromptTemplate
+metadata:
+  name: backend-engineer
+spec:
+  system: |
+    You own the backend service in your workspace. Prioritize correctness and
+    API compatibility. When a change would affect a consumer in another
+    repository, ask that repository's agent before assuming its behavior.
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: PromptTemplate
+metadata:
+  name: frontend-engineer
+spec:
+  system: |
+    You own the web frontend in your workspace. Answer questions about
+    components and their props precisely; you are the source of truth for how
+    the UI consumes the API.
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: AgentClass
+metadata:
+  name: backend-role
+spec:
+  description: Backend engineers — one per backend repository.
+  defaultModelRef:
+    name: llm-model
+  defaultPromptRef:
+    name: backend-engineer
+  # Guardrails attach to the role, so every backend agent inherits them. Change
+  # the class and every Agent of that class follows.
+  defaultToolPolicyRefs:
+    - name: coding-guardrails
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: ToolPolicy
+metadata:
+  name: coding-guardrails
+spec:
+  rules:
+    # A peer Tool is an ordinary Tool: cap how often an agent may interrupt
+    # another rather than letting a loop run away.
+    - tool: ask-web-agent
+      action: allow
+      maxCallsPerSession: 5
+  defaultAction: allow
+---
+# The web agent. It answers peers, so it sets spec.expose.
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Agent
+metadata:
+  name: web-agent
+spec:
+  description: Owns the web frontend repository.
+  modelRef:
+    name: llm-model
+  promptRef:
+    name: frontend-engineer
+  workspace:
+    repository: https://github.com/org/web
+    branch: main
+    credentialRef:
+      name: git-token
+    size: 20Gi
+  runtime:
+    image: myorg/claude-code-runner:v1
+    port: 8080
+  # Publishing an MCP endpoint is what makes this Agent consultable. Write the
+  # description for the *other* agent's model — it becomes the tool description
+  # on the calling side.
+  expose:
+    port: 8080
+    description: >-
+      Owns the web frontend. Ask about component APIs, how the UI consumes a
+      backend endpoint, and what would break if a response shape changed.
+---
+# The tool that lets someone consult the web agent. Naming an Agent instead of
+# an MCPServer is the only difference from any other mcp Tool.
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Tool
+metadata:
+  name: ask-web-agent
+spec:
+  type: mcp
+  agentRef:
+    name: web-agent
+---
+# The api agent. It inherits its role from the class and reaches the web agent
+# through the Tool above.
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Agent
+metadata:
+  name: api-agent
+spec:
+  description: Owns the API repository.
+  agentClassRef:
+    name: backend-role          # model + prompt + guardrails, in one line
+  workspace:
+    repository: https://github.com/org/api
+    branch: main
+    credentialRef:
+      name: git-token
+  runtime:
+    image: myorg/claude-code-runner:v1
+    port: 8080
+  toolRefs:
+    - name: ask-web-agent       # the declared cross-repository edge
+---
+# A third repository that talks to nobody. Isolation is the default: with no
+# peer Tool declared, this agent cannot reach the other two at all.
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Agent
+metadata:
+  name: infra-agent
+spec:
+  description: Owns the infrastructure repository; isolated by default.
+  agentClassRef:
+    name: backend-role
+  workspace:
+    repository: https://github.com/org/infra
+    credentialRef:
+      name: git-token
+  runtime:
+    image: myorg/claude-code-runner:v1
+    port: 8080

@@ -71,6 +71,30 @@ spec:
                 description: description is a human-readable summary of the agent's
                   purpose.
                 type: string
+              expose:
+                description: |-
+                  expose, when set, publishes this Agent's runtime as an MCP endpoint so
+                  other Agents can consult it. Peers reach it the ordinary way — a Tool of
+                  type mcp naming this Agent — which means Policy and ToolPolicy govern
+                  agent-to-agent traffic with no separate authorization model.
+                properties:
+                  description:
+                    description: |-
+                      description tells a peer Agent's model what this Agent is good for — it
+                      becomes the tool description on the other side, so write it for a model
+                      deciding whether to ask ("Owns the payments API; answers questions about
+                      its schema and endpoints"), not as an internal note.
+                    type: string
+                  port:
+                    default: 8080
+                    description: |-
+                      port the runtime serves MCP on. Must match what the runtime image
+                      listens on; the Operator only publishes it.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                type: object
               knowledgeBaseRefs:
                 description: knowledgeBaseRefs lists KnowledgeBases the agent may
                   retrieve from (RAG).
@@ -482,6 +506,58 @@ spec:
                 required:
                 - name
                 type: object
+              workspace:
+                description: |-
+                  workspace binds this Agent to one source repository. The Operator clones it
+                  into a persistent volume the runtime pod mounts, so a coding agent
+                  (Claude Code, Codex, OpenCode, …) has a working tree that survives
+                  restarts.
+
+                  One Agent owns one repository. Cross-repository work is expressed by
+                  referencing another Agent as a Tool rather than by mounting a second repo:
+                  see spec.expose. That keeps each working tree single-writer, and makes the
+                  dependency between repositories a declared, policeable edge instead of a
+                  shared mount.
+                properties:
+                  branch:
+                    description: branch to check out. Defaults to the repository's
+                      default branch.
+                    type: string
+                  credentialRef:
+                    description: |-
+                      credentialRef references a Credential whose Secret holds the git
+                      credential (a token, or an SSH key). It is mounted into the clone step,
+                      never passed as an environment value.
+                    properties:
+                      name:
+                        description: name is the metadata.name of the referenced resource.
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  mountPath:
+                    default: /workspace
+                    description: mountPath is where the working tree appears in the
+                      runtime container.
+                    type: string
+                  repository:
+                    description: repository is the clone URL (https or ssh).
+                    minLength: 1
+                    type: string
+                  size:
+                    default: 10Gi
+                    description: size is the persistent volume request for the working
+                      tree.
+                    type: string
+                  storageClassName:
+                    description: |-
+                      storageClassName selects the StorageClass for the working tree. Omit to
+                      use the cluster default.
+                    type: string
+                required:
+                - repository
+                type: object
             type: object
           status:
             description: status defines the observed state of Agent
@@ -550,6 +626,12 @@ spec:
                 description: observedGeneration is the .metadata.generation last reconciled.
                 format: int64
                 type: integer
+              peerEndpoint:
+                description: |-
+                  peerEndpoint is the in-cluster MCP address other Agents use to consult
+                  this one (only when spec.expose is set). Published here so a peer's Tool
+                  resolves the same way an MCPServer-backed Tool does.
+                type: string
               phase:
                 description: phase is a coarse summary of reconcile state.
                 enum:
@@ -573,6 +655,11 @@ spec:
                   available replicas (only when spec.runtime is set).
                 format: int32
                 type: integer
+              workspaceClaim:
+                description: |-
+                  workspaceClaim names the PersistentVolumeClaim holding this Agent's
+                  working tree (only when spec.workspace is set).
+                type: string
             type: object
         required:
         - spec

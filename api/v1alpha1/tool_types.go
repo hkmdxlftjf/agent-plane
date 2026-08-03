@@ -26,6 +26,12 @@ import (
 // +kubebuilder:validation:Enum=http;grpc;mcp;wasm;plugin;container
 type ToolType string
 
+// Tool type values that code branches on.
+const (
+	ToolTypeHTTP ToolType = "http"
+	ToolTypeMCP  ToolType = "mcp"
+)
+
 // ToolSpec describes a single executable capability an Agent can invoke.
 type ToolSpec struct {
 	// type is the invocation mechanism for this tool.
@@ -54,6 +60,20 @@ type ToolSpec struct {
 	// mcpServerRef, for type=mcp, references the MCPServer exposing this tool.
 	// +optional
 	MCPServerRef *LocalReference `json:"mcpServerRef,omitempty"`
+
+	// agentRef, for type=mcp, references another Agent to consult instead of an
+	// MCPServer. The target must set spec.expose; the Registry resolves this to
+	// that Agent's peer endpoint.
+	//
+	// This is how cross-repository work is expressed: an Agent bound to one
+	// repository asks an Agent bound to another, rather than mounting a second
+	// working tree. Because the edge is an ordinary Tool, Policy and ToolPolicy
+	// govern it — denying this Tool severs the link, with no separate
+	// agent-to-agent authorization model to keep in sync.
+	//
+	// Exactly one of mcpServerRef or agentRef may be set.
+	// +optional
+	AgentRef *LocalReference `json:"agentRef,omitempty"`
 
 	// timeoutSeconds bounds a single tool invocation.
 	// +kubebuilder:validation:Minimum=1

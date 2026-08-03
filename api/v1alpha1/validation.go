@@ -18,8 +18,10 @@ package v1alpha1
 
 import (
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // This file centralizes *structural* validation — invariants that are always
@@ -70,10 +72,17 @@ func (s *ToolPolicySpec) Validate() error {
 }
 
 // Validate reports the first structural problem in a ToolSpec, or nil. An mcp
-// tool is meaningless without a backing MCPServer reference.
+// tool is meaningless without a backing MCPServer reference — or, for a tool
+// that consults another Agent, an agentRef. Exactly one of the two applies.
 func (s *ToolSpec) Validate() error {
-	if s.Type == "mcp" && s.MCPServerRef == nil {
-		return fmt.Errorf("tool of type mcp requires spec.mcpServerRef")
+	if s.MCPServerRef != nil && s.AgentRef != nil {
+		return fmt.Errorf("set only one of spec.mcpServerRef or spec.agentRef, not both")
+	}
+	if s.Type == ToolTypeMCP && s.MCPServerRef == nil && s.AgentRef == nil {
+		return fmt.Errorf("tool of type mcp requires spec.mcpServerRef or spec.agentRef")
+	}
+	if s.AgentRef != nil && s.Type != ToolTypeMCP {
+		return fmt.Errorf("spec.agentRef requires type mcp, got %q", s.Type)
 	}
 	return nil
 }
@@ -101,6 +110,46 @@ func (s *AgentSpec) Validate() error {
 	}
 	if dup := firstDuplicate(refNames(s.KnowledgeBaseRefs)); dup != "" {
 		return fmt.Errorf("duplicate knowledgeBaseRef %q", dup)
+	}
+	if err := s.validateWorkspace(); err != nil {
+		return err
+	}
+	if err := s.validateExpose(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateWorkspace checks the repository binding. A workspace needs somewhere
+// to live, so it depends on spec.runtime — the Operator mounts the working tree
+// into the runtime pod, and without one there is no pod to mount it into.
+func (s *AgentSpec) validateWorkspace() error {
+	ws := s.Workspace
+	if ws == nil {
+		return nil
+	}
+	if s.Runtime == nil {
+		return fmt.Errorf("spec.workspace requires spec.runtime: the working tree is mounted into the runtime pod")
+	}
+	if ws.MountPath != "" && !strings.HasPrefix(ws.MountPath, "/") {
+		return fmt.Errorf("spec.workspace.mountPath %q must be absolute", ws.MountPath)
+	}
+	if ws.Size != "" {
+		if _, err := resource.ParseQuantity(ws.Size); err != nil {
+			return fmt.Errorf("spec.workspace.size %q is not a valid quantity: %w", ws.Size, err)
+		}
+	}
+	return nil
+}
+
+// validateExpose checks the peer endpoint. Exposing an Agent means publishing
+// its runtime, so it likewise depends on spec.runtime.
+func (s *AgentSpec) validateExpose() error {
+	if s.Expose == nil {
+		return nil
+	}
+	if s.Runtime == nil {
+		return fmt.Errorf("spec.expose requires spec.runtime: there is no runtime to publish")
 	}
 	return nil
 }

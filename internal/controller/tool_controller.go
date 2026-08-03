@@ -38,7 +38,7 @@ type ToolReconciler struct {
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=tools,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=tools/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=tools/finalizers,verbs=update
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=mcpservers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=mcpservers;agents,verbs=get;list;watch
 
 // Reconcile validates the Tool and publishes readiness.
 func (r *ToolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -61,6 +61,12 @@ func (r *ToolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if tool.Spec.MCPServerRef != nil {
 		targets = append(targets, refTarget{"MCPServer", tool.Spec.MCPServerRef.Name, &corev1alpha1.MCPServer{}})
 	}
+	// A peer Tool is backed by another Agent rather than an MCPServer; whether
+	// that Agent actually exposes an endpoint is checked by the *consuming*
+	// Agent's reconcile, which is where the failure is actionable.
+	if tool.Spec.AgentRef != nil {
+		targets = append(targets, refTarget{"Agent", tool.Spec.AgentRef.Name, &corev1alpha1.Agent{}})
+	}
 
 	missing, err := resolveTargets(ctx, r.Client, tool.Namespace, targets)
 	if err != nil {
@@ -78,6 +84,8 @@ func (r *ToolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&corev1alpha1.Tool{}).
 		Watches(&corev1alpha1.MCPServer{},
 			enqueueByIndex(r.Client, func() client.ObjectList { return &corev1alpha1.ToolList{} }, idxToolMCPServer)).
+		Watches(&corev1alpha1.Agent{},
+			enqueueByIndex(r.Client, func() client.ObjectList { return &corev1alpha1.ToolList{} }, idxToolAgent)).
 		Named("tool").
 		Complete(r)
 }
