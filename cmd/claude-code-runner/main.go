@@ -449,7 +449,12 @@ func (r *runner) turn(ctx context.Context, sessionID, message string) (string, e
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("claude: %w: %s", err, strings.TrimSpace(stderr.String()))
+		// The CLI reports its own failures as the JSON envelope on *stdout* and
+		// still exits non-zero — "Not logged in", an API error, a bad model. Only
+		// reporting stderr therefore surfaces a bare "exit status 1" with the
+		// actual reason discarded, which is indistinguishable from the CLI dying
+		// silently. Prefer the envelope's message and fall back to stderr.
+		return "", fmt.Errorf("claude: %w: %s", err, cliFailureDetail(stdout.Bytes(), stderr.String()))
 	}
 
 	var res cliResult
@@ -463,6 +468,26 @@ func (r *runner) turn(ctx context.Context, sessionID, message string) (string, e
 		return "", fmt.Errorf("claude reported an error: %s", res.Result)
 	}
 	return res.Result, nil
+}
+
+// cliFailureDetail extracts the reason a failed CLI invocation gives.
+//
+// The JSON envelope on stdout carries the message ("Not logged in · Please run
+// /login", an upstream API error) even when the process exits non-zero, while
+// stderr is frequently empty. Unparseable output falls back to stderr, then to
+// the raw stdout, so a caller is never handed an empty explanation.
+func cliFailureDetail(stdout []byte, stderr string) string {
+	var res cliResult
+	if err := json.Unmarshal(stdout, &res); err == nil && res.Result != "" {
+		return res.Result
+	}
+	if s := strings.TrimSpace(stderr); s != "" {
+		return s
+	}
+	if s := strings.TrimSpace(string(stdout)); s != "" {
+		return s
+	}
+	return "no output"
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

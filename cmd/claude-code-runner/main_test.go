@@ -395,3 +395,70 @@ func TestModelEnvNilModel(t *testing.T) {
 		t.Error("expected the process environment to be preserved")
 	}
 }
+
+// A CLI that exits non-zero puts its reason in the JSON envelope on stdout while
+// leaving stderr empty. Reporting only stderr turned every such failure into a
+// bare "exit status 1" — the reason was already in hand and thrown away, which is
+// how a misconfigured credential looked identical to the CLI dying silently.
+func TestCLIFailureDetail(t *testing.T) {
+	tests := []struct {
+		name   string
+		stdout string
+		stderr string
+		want   string
+	}{
+		{
+			name:   "the envelope's message is preferred over empty stderr",
+			stdout: `{"result":"Not logged in · Please run /login","is_error":true}`,
+			want:   "Not logged in · Please run /login",
+		},
+		{
+			name:   "stderr is used when stdout is not the envelope",
+			stdout: "garbage",
+			stderr: "  spawn ENOENT\n",
+			want:   "spawn ENOENT",
+		},
+		{
+			name:   "unparseable stdout beats reporting nothing",
+			stdout: "  panic: boom  ",
+			want:   "panic: boom",
+		},
+		{
+			name: "silence is named rather than returned blank",
+			want: "no output",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cliFailureDetail([]byte(tc.stdout), tc.stderr); got != tc.want {
+				t.Errorf("cliFailureDetail = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The end-to-end shape of the above: a non-zero exit must reach the caller with
+// the CLI's own explanation, not merely its exit status.
+func TestHandleChatSurfacesCLIExitReason(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "claude-failing")
+	script := "#!/bin/sh\n" +
+		`echo '{"result":"Not logged in · Please run /login","is_error":true}'` + "\nexit 1\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+
+	r := &runner{
+		cfg: testConfig(), enforcer: policy.New(nil), workspace: t.TempDir(),
+		cli: path, env: os.Environ(), timeout: time.Minute, sessions: map[string]string{},
+	}
+
+	rec := httptest.NewRecorder()
+	r.handleChat(rec, httptest.NewRequest(http.MethodPost, "/api/chat",
+		strings.NewReader(`{"message":"hi"}`)))
+
+	var out map[string]string
+	_ = json.NewDecoder(rec.Body).Decode(&out)
+	if !strings.Contains(out["error"], "Not logged in") {
+		t.Errorf("error = %q, want the CLI's reason and not just an exit status", out["error"])
+	}
+}
