@@ -645,9 +645,22 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 			dep.Spec.Template.Spec.Volumes = nil
 		} else {
 			mount := workspaceMountPath(ws)
-			container.Env = append(container.Env, corev1.EnvVar{
-				Name: "AGENTPLANE_WORKSPACE", Value: mount,
-			})
+			container.Env = append(container.Env,
+				corev1.EnvVar{Name: "AGENTPLANE_WORKSPACE", Value: mount},
+				// The clone init container runs as its own image's user (root),
+				// while the runtime image typically drops to a non-root uid. git
+				// refuses to operate on a tree owned by a different user
+				// ("detected dubious ownership"), which breaks every command the
+				// agent exists to run — on a checkout that is otherwise fine.
+				//
+				// Declaring the tree safe through git's environment-based config
+				// avoids having to know the runtime image's uid, which the Operator
+				// cannot see. Writing ~/.gitconfig would need that uid's home
+				// directory to exist and be writable; this does not.
+				corev1.EnvVar{Name: "GIT_CONFIG_COUNT", Value: "1"},
+				corev1.EnvVar{Name: "GIT_CONFIG_KEY_0", Value: "safe.directory"},
+				corev1.EnvVar{Name: "GIT_CONFIG_VALUE_0", Value: mount},
+			)
 			container.VolumeMounts = []corev1.VolumeMount{
 				{Name: workspaceVolumeName, MountPath: mount},
 			}
@@ -683,6 +696,7 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 		}
 
 		dep.Spec.Template.Spec.Containers = []corev1.Container{container}
+		dep.Spec.Template.Spec.ServiceAccountName = rt.ServiceAccountName
 		return controllerutil.SetControllerReference(agent, dep, r.Scheme)
 	}); err != nil {
 		return err

@@ -116,6 +116,15 @@ var _ = Describe("Agent workspace", func() {
 			Expect(envOf(runtime)["AGENTPLANE_WORKSPACE"]).To(Equal("/workspace"))
 			Expect(dep.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName).To(Equal(pvcKey.Name))
 
+			By("declaring the cloned tree safe for a different uid")
+			// The clone container runs as root; the runtime image drops to a non-root
+			// user. Without this, git refuses the tree as "dubious ownership" and
+			// every command the agent exists to run fails on a checkout that is
+			// otherwise perfectly good.
+			Expect(envOf(runtime)["GIT_CONFIG_COUNT"]).To(Equal("1"))
+			Expect(envOf(runtime)["GIT_CONFIG_KEY_0"]).To(Equal("safe.directory"))
+			Expect(envOf(runtime)["GIT_CONFIG_VALUE_0"]).To(Equal("/workspace"))
+
 			By("pinning to a single writer")
 			// A working tree has exactly one writer. RollingUpdate would overlap two
 			// pods on the same checkout, and with ReadWriteOnce the new one could not
@@ -241,6 +250,45 @@ var _ = Describe("Agent workspace", func() {
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(testMissingName))
+		})
+	})
+
+	// A runtime that reads its own model credential needs an identity to read it
+	// with. Without this field the pods run as the namespace's "default"
+	// ServiceAccount, and the only way to grant the Secret read is to bind it to
+	// "default" — which grants it to every unrelated pod in the namespace too.
+	Context("When an Agent names a ServiceAccount", func() {
+		const agentName = "test-sa-agent"
+		agentKey := types.NamespacedName{Name: agentName, Namespace: nsDefault}
+		depKey := types.NamespacedName{Name: agentName + "-runtime", Namespace: nsDefault}
+
+		BeforeEach(func() {
+			agent := &corev1alpha1.Agent{
+				ObjectMeta: metav1.ObjectMeta{Name: agentName, Namespace: nsDefault},
+				Spec: corev1alpha1.AgentSpec{
+					ModelRef: &corev1alpha1.LocalReference{Name: testAnyModel},
+					Runtime: &corev1alpha1.AgentRuntimeSpec{
+						Image:              testCodingImage,
+						ServiceAccountName: "agent-runtime",
+					},
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
+		})
+
+		AfterEach(func() {
+			deleteIfExists(ctx, agentKey, &corev1alpha1.Agent{})
+			deleteIfExists(ctx, depKey, &appsv1.Deployment{})
+		})
+
+		It("runs the runtime pods as that account", func() {
+			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, depKey, dep)).To(Succeed())
+			Expect(dep.Spec.Template.Spec.ServiceAccountName).To(Equal("agent-runtime"))
 		})
 	})
 

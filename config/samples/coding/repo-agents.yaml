@@ -39,6 +39,41 @@ spec:
     API compatibility. When a change would affect a consumer in another
     repository, ask that repository's agent before assuming its behavior.
 ---
+# The identity the runtime pods read their model credential with.
+#
+# The Registry serves Secret *coordinates*, never values — the runtime reads the
+# Secret itself, which needs get on secrets in this namespace. Without a
+# dedicated account the pods fall back to the namespace's "default"
+# ServiceAccount, and the only way to grant the read is to bind it to "default",
+# which hands the same access to every unrelated pod in the namespace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-runtime
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-runtime
+rules:
+  # get only, and no list/watch: a runtime resolves the Secrets its own Model and
+  # workspace name. Listing would let it enumerate every Secret in the namespace.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-runtime
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-runtime
+subjects:
+  - kind: ServiceAccount
+    name: agent-runtime
+---
 apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: PromptTemplate
 metadata:
@@ -96,6 +131,7 @@ spec:
     size: 20Gi
   runtime:
     image: ghcr.io/hkmdxlftjf/agent-plane-claude-code-runner:latest
+    serviceAccountName: agent-runtime
     port: 8080
   # Publishing an MCP endpoint is what makes this Agent consultable. Write the
   # description for the *other* agent's model — it becomes the tool description
@@ -134,6 +170,7 @@ spec:
       name: git-token
   runtime:
     image: ghcr.io/hkmdxlftjf/agent-plane-claude-code-runner:latest
+    serviceAccountName: agent-runtime
     port: 8080
   toolRefs:
     - name: ask-web-agent       # the declared cross-repository edge
@@ -154,4 +191,5 @@ spec:
       name: git-token
   runtime:
     image: ghcr.io/hkmdxlftjf/agent-plane-claude-code-runner:latest
+    serviceAccountName: agent-runtime
     port: 8080

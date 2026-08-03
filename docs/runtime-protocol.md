@@ -23,6 +23,11 @@ is a complete runtime built on it.
    hash to decide whether to reload.
 3. **Config/secret separation.** The payload carries Secret **coordinates**
    (name/key), never the value; the runtime reads the Secret via its own RBAC.
+   That RBAC is yours to grant: set `spec.runtime.serviceAccountName` and bind a
+   Role allowing `get` on `secrets`. Skip it and the pods run as the namespace's
+   `default` ServiceAccount — the runtime starts, logs a warning, and then fails
+   every turn with a credential error, because it never read the key. See
+   `config/samples/coding/repo-agents.yaml` for the three objects involved.
 4. **The control plane never triggers inference.** The protocol answers "what
    config", not "when to run"; triggering is the runtime's concern.
 

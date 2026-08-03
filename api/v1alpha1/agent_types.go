@@ -228,6 +228,18 @@ type AgentRuntimeSpec struct {
 	// +listType=atomic
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
+	// serviceAccountName is the ServiceAccount the runtime pods run as.
+	//
+	// A runtime needs one whenever its Model carries a credentialRef: the Registry
+	// serves Secret *coordinates* and the runtime reads the value itself, which
+	// requires get on secrets in this namespace. Left empty the pods run as the
+	// namespace's "default" ServiceAccount, and the only way to grant that read is
+	// to bind the permission to "default" — which grants it to every other pod in
+	// the namespace too. Naming a dedicated account here keeps the grant scoped to
+	// this runtime.
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
 	// resources is the runtime container resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
