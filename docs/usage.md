@@ -494,7 +494,7 @@ spec:
     branch: main
     credentialRef: {name: git-token}
   runtime:
-    image: myorg/claude-code-runner:v1
+    image: ghcr.io/hkmdxlftjf/agent-plane-claude-code-runner:latest
     port: 8080
 ```
 
@@ -567,6 +567,31 @@ violation — failing the caller for it would let one broken repository cascade
 across every agent that consults it.
 
 Worked example: `config/samples/coding/repo-agents.yaml`.
+
+### The runner image
+
+`Dockerfile.claude-code-runner` builds what runs in the pod: a Go shell plus the
+Claude Code CLI. The shell does two things and nothing else —
+
+- **Projection.** Claude Code accepts no injected system prompt or tool list, but
+  it *does* read `CLAUDE.md` and `.mcp.json` from its working directory. So the
+  Agent's `promptRef`, Skills, and mcp Tools (including peer Agents) are written
+  into those files on startup and again on every hot reload. The CLI is unpatched;
+  the same approach carries to any coding agent that reads files on startup.
+- **A turn.** `POST /api/chat` execs `claude --print --output-format json`,
+  mapping the caller's `sessionId` to the CLI's own session so follow-ups resume
+  rather than start cold. Turns are serialized — one working tree, one writer.
+
+Two limits worth knowing:
+
+- **Skill bodies are inlined, not disclosed on demand.** Claude Code has no
+  `load_skill` tool to call, so the catalog approach §11 describes does not apply
+  here. Prefer a few focused Skills over many broad ones on this runtime.
+- **ToolPolicy governs the projected MCP tools, not Claude Code's built-ins.**
+  `Bash`, `Write`, and friends are not Tool CRs, so a ToolPolicy says nothing
+  about them, and `maxCallsPerSession` has no CLI equivalent. The runner **logs
+  each unenforceable rule at startup** rather than letting a policy look applied
+  when half of it is inert.
 
 ### Talking to it from an IM client
 

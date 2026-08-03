@@ -222,7 +222,7 @@ spec:
   workspace:
     repository: https://github.com/org/api
     credentialRef: {name: git-token}
-  runtime: {image: myorg/claude-code-runner:v1, port: 8080}
+  runtime: {image: ghcr.io/hkmdxlftjf/agent-plane-claude-code-runner:latest, port: 8080}
 ```
 
 The Operator provisions a volume, clones into it, and pins the Deployment to a
@@ -234,6 +234,12 @@ should answer others sets `spec.expose`; another reaches it through an ordinary
 ToolPolicy already govern it** — deny the Tool and the link is severed, with no
 separate agent-to-agent permission model. Isolation is the default: an Agent
 with no peer Tool cannot reach any other.
+
+The runner image is built from this repo (`Dockerfile.claude-code-runner`): a Go
+shell that projects the Registry config into `CLAUDE.md` + `.mcp.json` and drives
+the Claude Code CLI. The CLI is unpatched — the platform's declarations simply
+arrive as files it already reads, which is why the same approach carries to other
+coding agents.
 
 See **[docs/usage.md](docs/usage.md)** §14 and
 `config/samples/coding/repo-agents.yaml`.
