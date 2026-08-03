@@ -51,6 +51,9 @@ const (
 	testSkillCMKey   = "SKILL.md"
 	testToolSetName  = "bundle"
 	testTriggerName  = "lark"
+	testAnyModel     = "any-model"
+	testMissingName  = "does-not-exist"
+	testCodingImage  = "example/claude-code:v1"
 )
 
 // ownedLabels is the label set for a workload the Operator materializes:

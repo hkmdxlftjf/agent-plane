@@ -28,8 +28,9 @@ and serves the resolved configuration to runtimes through the **Registry**.
 11. [Tool vs Skill](#11-tool-vs-skill)
 12. [Authorization: Policy, ToolPolicy, and skill scope](#12-authorization-policy-toolpolicy-and-skill-scope)
 13. [Inbound: IM bots and other event sources](#13-inbound-im-bots-and-other-event-sources)
-14. [FAQ](#14-faq)
-15. [Repo layout](#15-repo-layout)
+14. [Coding agents: one repo per Agent](#14-coding-agents-one-repo-per-agent)
+15. [FAQ](#15-faq)
+16. [Repo layout](#16-repo-layout)
 
 ---
 
@@ -477,7 +478,107 @@ example: `config/samples/inbound/lark-trigger.yaml`.
 
 ---
 
-## 14. FAQ
+## 14. Coding agents: one repo per Agent
+
+A coding agent — Claude Code, Codex, OpenCode — needs a working tree, and a
+working tree has exactly one writer. So the unit is **one Agent, one repository,
+one pod**:
+
+```yaml
+kind: Agent
+metadata: {name: api-agent}
+spec:
+  agentClassRef: {name: backend-role}   # model + prompt + guardrails
+  workspace:
+    repository: https://github.com/org/api
+    branch: main
+    credentialRef: {name: git-token}
+  runtime:
+    image: myorg/claude-code-runner:v1
+    port: 8080
+```
+
+The Operator provisions a PersistentVolumeClaim, clones into it with an init
+container, and mounts it at `spec.workspace.mountPath` (default `/workspace`).
+The checkout, its branches, and any build cache survive pod restarts — the clone
+step fetches and resets an existing tree rather than re-cloning it.
+
+Two consequences worth stating plainly:
+
+- **The Deployment is pinned to one replica with the `Recreate` strategy.** This
+  is not tunable while a workspace is set. `RollingUpdate` would start a second
+  pod on the same checkout before the first exited, and with `ReadWriteOnce` it
+  could not even schedule.
+- **The git credential is mounted, never interpolated into the remote URL.** A
+  URL-embedded token leaks into `git remote -v`, the reflog, and any error git
+  prints. The clone step reads it through a credential helper.
+
+### Roles are separate from repositories
+
+`promptRef` gives an Agent its role; `AgentClass` makes a role reusable. Ten
+repositories across four roles is four AgentClasses and ten short Agents, not
+forty full configurations — and a class carries `defaultToolRefs`,
+`defaultSkillRefs`, and `defaultToolPolicyRefs`, so a role's tools and guardrails
+travel with it.
+
+Inheritance **fills gaps, it does not merge**: an Agent that sets `policyRefs`
+itself gets none of the class's `defaultPolicyRefs`. To extend a class's list,
+restate it.
+
+### Cross-repository work is a declared edge
+
+An Agent that should answer others sets `spec.expose`; the Operator publishes a
+peer Service and records the address in `status.peerEndpoint`. Another Agent
+reaches it through an ordinary Tool:
+
+```yaml
+kind: Agent
+metadata: {name: web-agent}
+spec:
+  expose:
+    description: Owns the web frontend. Ask about component APIs.
+---
+kind: Tool
+metadata: {name: ask-web-agent}
+spec:
+  type: mcp
+  agentRef: {name: web-agent}    # instead of mcpServerRef
+---
+kind: Agent
+metadata: {name: api-agent}
+spec:
+  toolRefs: [{name: ask-web-agent}]
+```
+
+**Because the edge is a Tool, the authorization you already have governs it.**
+Denying `ask-web-agent` in a ToolPolicy severs the link; `maxCallsPerSession`
+caps how often one agent may interrupt another. There is no separate
+agent-to-agent permission model to keep in sync — which is the reason peering
+was built this way rather than as its own CRD.
+
+**Isolation is the default.** An Agent with no peer Tool cannot reach any other
+Agent. The topology is whatever the Tools declare, and `kubectl get agent -o yaml`
+shows it.
+
+Two declaration errors are refused at reconcile rather than surfacing as a tool
+that always fails: a peer Tool naming the Agent itself, and one naming an Agent
+that does not set `spec.expose`. A peer that is merely *unhealthy* is not a
+violation — failing the caller for it would let one broken repository cascade
+across every agent that consults it.
+
+Worked example: `config/samples/coding/repo-agents.yaml`.
+
+### Talking to it from an IM client
+
+Combine this with a `Trigger` (§13) and a repository's agent becomes reachable
+from Lark or DingTalk. One caveat: the adapter contract expects the runtime to
+serve `POST /api/chat`, and these coding tools are CLIs rather than HTTP
+servers — the runner image wraps them. That wrapper is the image's business; the
+contract does not change.
+
+---
+
+## 15. FAQ
 
 **kubectl hits the wrong cluster?** Many shells `export KUBECONFIG=…` in their
 profile. Set it explicitly: `export KUBECONFIG=$HOME/.kube/config` (verify
@@ -502,7 +603,7 @@ the value is read by the runtime via its own RBAC.
 
 ---
 
-## 15. Repo layout
+## 16. Repo layout
 
 ```
 api/v1alpha1/           # 14 CRD types + shared types + structural validation (validation.go)

@@ -301,3 +301,94 @@ func TestResolveSkillFromConfigMapKeepsAllowedTools(t *testing.T) {
 		t.Errorf("AllowedTools = %v", got.AllowedTools)
 	}
 }
+
+// A peer Tool must resolve to the target Agent's published endpoint, so
+// consulting another Agent looks to the runtime exactly like any other MCP
+// server — that equivalence is what lets Policy govern cross-repo calls.
+func TestResolveToolResolvesPeerAgent(t *testing.T) {
+	s := testServer(t,
+		&corev1alpha1.Agent{
+			ObjectMeta: metav1.ObjectMeta{Name: "web-frontend", Namespace: testNS},
+			Spec: corev1alpha1.AgentSpec{
+				Expose: &corev1alpha1.AgentExposeSpec{Description: "Owns the web frontend"},
+			},
+			Status: corev1alpha1.AgentStatus{
+				PeerEndpoint: "http://web-frontend-peer.default.svc:8080",
+			},
+		},
+		&corev1alpha1.Tool{
+			ObjectMeta: metav1.ObjectMeta{Name: "ask-web", Namespace: testNS},
+			Spec: corev1alpha1.ToolSpec{
+				Type:     corev1alpha1.ToolTypeMCP,
+				AgentRef: &corev1alpha1.LocalReference{Name: "web-frontend"},
+			},
+		},
+	)
+
+	got, err := s.resolveTool(context.Background(), testNS, "ask-web")
+	if err != nil {
+		t.Fatalf("resolveTool: %v", err)
+	}
+	if got.Endpoint != "http://web-frontend-peer.default.svc:8080" {
+		t.Errorf("Endpoint = %q, want the peer endpoint", got.Endpoint)
+	}
+	// With no description of its own, the Tool inherits the peer's — that text is
+	// what tells the calling model when asking is worthwhile.
+	if got.Description != "Owns the web frontend" {
+		t.Errorf("Description = %q, want the peer's", got.Description)
+	}
+}
+
+// A Tool's own description wins over the peer's, so an operator can phrase the
+// capability from the caller's point of view.
+func TestResolveToolPeerDescriptionOverride(t *testing.T) {
+	s := testServer(t,
+		&corev1alpha1.Agent{
+			ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: testNS},
+			Spec:       corev1alpha1.AgentSpec{Expose: &corev1alpha1.AgentExposeSpec{Description: "generic"}},
+			Status:     corev1alpha1.AgentStatus{PeerEndpoint: "http://web-peer.default.svc:8080"},
+		},
+		&corev1alpha1.Tool{
+			ObjectMeta: metav1.ObjectMeta{Name: "ask-web", Namespace: testNS},
+			Spec: corev1alpha1.ToolSpec{
+				Type:        corev1alpha1.ToolTypeMCP,
+				Description: "Ask the frontend team about component APIs",
+				AgentRef:    &corev1alpha1.LocalReference{Name: "web"},
+			},
+		},
+	)
+
+	got, err := s.resolveTool(context.Background(), testNS, "ask-web")
+	if err != nil {
+		t.Fatalf("resolveTool: %v", err)
+	}
+	if got.Description != "Ask the frontend team about component APIs" {
+		t.Errorf("Description = %q, want the Tool's own", got.Description)
+	}
+}
+
+// A peer that has not published an endpoint yet must leave it empty rather than
+// inventing an address; the caller's Agent is already Degraded in that state.
+func TestResolveToolPeerWithoutEndpoint(t *testing.T) {
+	s := testServer(t,
+		&corev1alpha1.Agent{
+			ObjectMeta: metav1.ObjectMeta{Name: "not-ready", Namespace: testNS},
+			Spec:       corev1alpha1.AgentSpec{Expose: &corev1alpha1.AgentExposeSpec{}},
+		},
+		&corev1alpha1.Tool{
+			ObjectMeta: metav1.ObjectMeta{Name: "ask-not-ready", Namespace: testNS},
+			Spec: corev1alpha1.ToolSpec{
+				Type:     corev1alpha1.ToolTypeMCP,
+				AgentRef: &corev1alpha1.LocalReference{Name: "not-ready"},
+			},
+		},
+	)
+
+	got, err := s.resolveTool(context.Background(), testNS, "ask-not-ready")
+	if err != nil {
+		t.Fatalf("resolveTool: %v", err)
+	}
+	if got.Endpoint != "" {
+		t.Errorf("Endpoint = %q, want empty", got.Endpoint)
+	}
+}

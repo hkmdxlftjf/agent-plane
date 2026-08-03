@@ -56,6 +56,7 @@ const (
 
 	idxToolSetTools     = "spec.toolRefs"
 	idxToolMCPServer    = "spec.mcpServerRef"
+	idxToolAgent        = "spec.agentRef"
 	idxModelCredential  = "spec.credentialRef"
 	idxMemoryConnection = "spec.connectionRef"
 	idxKBModel          = "spec.embeddingModelRef"
@@ -177,6 +178,9 @@ func indexSpecs() []indexSpec {
 		}},
 		{&corev1alpha1.Tool{}, idxToolMCPServer, func(o client.Object) []string {
 			return refName(o.(*corev1alpha1.Tool).Spec.MCPServerRef)
+		}},
+		{&corev1alpha1.Tool{}, idxToolAgent, func(o client.Object) []string {
+			return refName(o.(*corev1alpha1.Tool).Spec.AgentRef)
 		}},
 		{&corev1alpha1.Model{}, idxModelCredential, func(o client.Object) []string {
 			return refName(o.(*corev1alpha1.Model).Spec.CredentialRef)

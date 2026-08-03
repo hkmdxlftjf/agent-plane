@@ -88,7 +88,7 @@ var _ = Describe("Agent Controller", func() {
 		BeforeEach(func() {
 			agent := &corev1alpha1.Agent{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: nsDefault},
-				Spec:       corev1alpha1.AgentSpec{ModelRef: &corev1alpha1.LocalReference{Name: "does-not-exist"}},
+				Spec:       corev1alpha1.AgentSpec{ModelRef: &corev1alpha1.LocalReference{Name: testMissingName}},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
 		})

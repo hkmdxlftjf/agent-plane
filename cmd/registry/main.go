@@ -451,10 +451,26 @@ func (s *server) resolveTool(ctx context.Context, ns, name string) (sdk.Tool, er
 	if tool.Spec.InputSchema != nil {
 		tv.InputSchema = tool.Spec.InputSchema.Raw
 	}
-	if tool.Spec.Type == "mcp" && tool.Spec.MCPServerRef != nil {
+	if tool.Spec.Type == corev1alpha1.ToolTypeMCP && tool.Spec.MCPServerRef != nil {
 		var mcp corev1alpha1.MCPServer
 		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: tool.Spec.MCPServerRef.Name}, &mcp); err == nil {
 			tv.Endpoint = mcp.Status.Endpoint
+		}
+	}
+	// A peer Tool resolves to another Agent's published MCP endpoint, so
+	// consulting a peer looks to the runtime exactly like calling any other MCP
+	// server — no second code path, and no peer-specific client.
+	if tool.Spec.Type == corev1alpha1.ToolTypeMCP && tool.Spec.AgentRef != nil {
+		var peer corev1alpha1.Agent
+		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: tool.Spec.AgentRef.Name}, &peer); err == nil {
+			tv.Endpoint = peer.Status.PeerEndpoint
+			// Fall back to the peer's own description so the calling model knows
+			// what this Agent is for without the Tool repeating it.
+			if tv.Description == "" && peer.Spec.Expose != nil {
+				tv.Description = peer.Spec.Expose.Description
+			}
+		} else {
+			s.log.Error(err, "resolve peer agent", "agent", tool.Spec.AgentRef.Name)
 		}
 	}
 	return tv, nil

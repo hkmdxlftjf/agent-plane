@@ -65,6 +65,9 @@ Resources.
 | **Credential** | Indirects secret material through a Kubernetes Secret. |
 | **Trigger** | An *inbound* event source (IM bot, webhook) feeding an Agent, run as an owned adapter Deployment. |
 
+An Agent may additionally bind a **repository** (`spec.workspace`) and publish
+itself to peers (`spec.expose`) — see *Coding agents* below.
+
 ### The reference controllers
 
 - **`AgentReconciler`** — the *aggregating* pattern. Resolves every reference an
@@ -205,6 +208,35 @@ Registry and hot-reloads on change. The reference image (`Dockerfile.agent-runti
 `cmd/agent-runtime --watch`) does exactly this. In-cluster Registry manifests are
 in `config/registry/`. See **[docs/usage.md](docs/usage.md)** §8 and
 **[docs/runtime-protocol.md](docs/runtime-protocol.md)** for the full contract.
+
+## Coding agents: one repo per Agent
+
+A coding agent (Claude Code, Codex, OpenCode, …) needs a working tree, and a
+working tree has exactly one writer — so the unit is **one Agent, one
+repository, one pod**:
+
+```yaml
+kind: Agent
+spec:
+  agentClassRef: {name: backend-role}      # role: model + prompt + guardrails
+  workspace:
+    repository: https://github.com/org/api
+    credentialRef: {name: git-token}
+  runtime: {image: myorg/claude-code-runner:v1, port: 8080}
+```
+
+The Operator provisions a volume, clones into it, and pins the Deployment to a
+single replica with `Recreate` — two pods on one checkout is never correct.
+
+**Cross-repository work is a declared edge, not a shared mount.** An Agent that
+should answer others sets `spec.expose`; another reaches it through an ordinary
+`Tool` whose `agentRef` names it. Because the edge is a Tool, **Policy and
+ToolPolicy already govern it** — deny the Tool and the link is severed, with no
+separate agent-to-agent permission model. Isolation is the default: an Agent
+with no peer Tool cannot reach any other.
+
+See **[docs/usage.md](docs/usage.md)** §14 and
+`config/samples/coding/repo-agents.yaml`.
 
 ## Inbound events (`Trigger`)
 

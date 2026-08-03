@@ -4,4 +4,5 @@ resources:
 - travel/amap.yaml
 - travel/policy.yaml
 - inbound/lark-trigger.yaml
+- coding/repo-agents.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

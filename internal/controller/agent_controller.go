@@ -22,11 +22,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -77,6 +79,15 @@ type resolution struct {
 	// skillScopes are the tool restrictions the referenced Skills declare, checked
 	// against the Agent's tool surface for coherence.
 	skillScopes []corev1alpha1.SkillToolScope
+	// peers are the Agents this one consults through peer Tools.
+	peers []peerRef
+}
+
+// peerRef is one edge in the peer graph: the Tool that declares it, and the
+// Agent it points at.
+type peerRef struct {
+	tool  string
+	agent string
 }
 
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agents,verbs=get;list;watch;create;update;patch;delete
@@ -85,6 +96,8 @@ type resolution struct {
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=models;workflows;prompttemplates;tools;toolsets;skills;memories;policies;toolpolicies;agentclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=credentials,verbs=get;list;watch
 
 // Reconcile resolves every reference declared by the Agent. If any referenced
 // resource is missing, the Agent is marked not Ready with reason
@@ -115,6 +128,15 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 	}
 
+	// Publish the peer endpoint if this Agent answers other Agents.
+	if agent.Spec.Expose != nil {
+		if err := r.reconcilePeer(ctx, &agent); err != nil {
+			return ctrl.Result{}, err
+		}
+	} else {
+		agent.Status.PeerEndpoint = ""
+	}
+
 	if len(res.missing) > 0 {
 		agent.Status.Phase = corev1alpha1.AgentPhaseDegraded
 		agent.Status.ResolvedConfigHash = ""
@@ -139,6 +161,11 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// alongside policy violations because the operator's fix is the same shape —
 	// edit a declaration — and both mean "exists, but incoherent".
 	violations = append(violations, corev1alpha1.SkillToolViolations(res.skillScopes, res.declared.Tools)...)
+	// A peer Tool pointing at itself, or at an Agent that publishes no endpoint,
+	// resolves to nothing — the calling model would advertise a tool whose every
+	// call fails. Same class of error as an unreachable Skill tool, so it lands
+	// in the same report.
+	violations = append(violations, r.peerViolations(ctx, &agent, res.peers)...)
 	if len(violations) > 0 {
 		agent.Status.Phase = corev1alpha1.AgentPhaseDegraded
 		agent.Status.ResolvedConfigHash = ""
@@ -306,6 +333,12 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 		if tool.Spec.MCPServerRef != nil {
 			mcpNames = append(mcpNames, tool.Spec.MCPServerRef.Name)
 		}
+		// A peer Tool names another Agent. Record it so the coherence check below
+		// can verify the target actually answers, and so the peer graph is visible
+		// in one place.
+		if tool.Spec.AgentRef != nil {
+			res.peers = append(res.peers, peerRef{tool: name, agent: tool.Spec.AgentRef.Name})
+		}
 	}
 	res.declared.MCPServers = dedupe(mcpNames)
 
@@ -399,8 +432,150 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
+// workspaceVolumeName is the volume carrying the Agent's working tree.
+const workspaceVolumeName = "workspace"
+
+// gitCredentialMountPath is where a workspace Credential's Secret is mounted in
+// the clone step. As elsewhere, the value is mounted rather than passed as
+// environment so it stays out of `kubectl describe pod`.
+const gitCredentialMountPath = "/var/run/agentplane/git"
+
+// defaultWorkspaceMountPath is where the working tree appears when the Agent
+// does not say. Matches the CRD default.
+const defaultWorkspaceMountPath = "/workspace"
+
 func agentRuntimeLabels(agent *corev1alpha1.Agent) map[string]string {
 	return ownedLabels("agent-runtime", agent.Name)
+}
+
+func workspaceClaimName(agent *corev1alpha1.Agent) string {
+	return agent.Name + "-workspace"
+}
+
+// reconcileWorkspace provisions the PersistentVolumeClaim holding the Agent's
+// working tree.
+//
+// A PVC's storage request is immutable in most clusters, so the claim is created
+// once and thereafter left alone: shrinking is never allowed, and growing needs
+// an expansion-capable StorageClass. Rewriting the spec on every reconcile would
+// fail the update against an unchanged claim.
+func (r *AgentReconciler) reconcileWorkspace(ctx context.Context, agent *corev1alpha1.Agent) error {
+	ws := agent.Spec.Workspace
+	name := workspaceClaimName(agent)
+
+	var existing corev1.PersistentVolumeClaim
+	err := r.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: name}, &existing)
+	switch {
+	case err == nil:
+		return nil // already provisioned; size and class are immutable
+	case !apierrors.IsNotFound(err):
+		return err
+	}
+
+	size := ws.Size
+	if size == "" {
+		size = "10Gi"
+	}
+	quantity, parseErr := resource.ParseQuantity(size)
+	if parseErr != nil {
+		return fmt.Errorf("workspace size %q: %w", size, parseErr)
+	}
+
+	claim := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: agent.Namespace,
+			Labels:    agentRuntimeLabels(agent),
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			// One Agent owns one working tree, and the Deployment is pinned to a
+			// single replica for the same reason — ReadWriteOnce matches that and
+			// works on every storage backend.
+			AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			StorageClassName: ws.StorageClassName,
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceStorage: quantity},
+			},
+		},
+	}
+	if err := controllerutil.SetControllerReference(agent, claim, r.Scheme); err != nil {
+		return err
+	}
+	return client.IgnoreAlreadyExists(r.Create(ctx, claim))
+}
+
+// workspaceMountPath returns where the working tree appears in the container.
+func workspaceMountPath(ws *corev1alpha1.AgentWorkspaceSpec) string {
+	if ws.MountPath != "" {
+		return ws.MountPath
+	}
+	return defaultWorkspaceMountPath
+}
+
+// cloneInitContainer builds the step that populates the working tree before the
+// runtime starts.
+//
+// It is idempotent by design: an existing clone is fetched and reset rather than
+// re-cloned, so a pod restart resumes on the same tree instead of discarding
+// work. The credential is mounted read-only and consumed by a credential helper,
+// never interpolated into the remote URL — a URL-embedded token leaks into
+// `git remote -v`, the reflog, and any error message git prints.
+func cloneInitContainer(agent *corev1alpha1.Agent, hasCredential bool) corev1.Container {
+	ws := agent.Spec.Workspace
+	mount := workspaceMountPath(ws)
+
+	script := `set -eu
+REPO="$AGENTPLANE_REPOSITORY"
+DIR="$AGENTPLANE_WORKSPACE"
+if [ -n "${AGENTPLANE_GIT_CREDENTIAL_FILE:-}" ] && [ -f "$AGENTPLANE_GIT_CREDENTIAL_FILE" ]; then
+  # Feed the token to git without putting it in the URL or the environment.
+  git config --global credential.helper \
+    '!f() { echo "username=x-access-token"; echo "password=$(cat '"'"'$AGENTPLANE_GIT_CREDENTIAL_FILE'"'"')"; }; f'
+fi
+if [ -d "$DIR/.git" ]; then
+  echo "workspace already cloned; fetching"
+  git -C "$DIR" remote set-url origin "$REPO"
+  git -C "$DIR" fetch --prune origin
+  if [ -n "${AGENTPLANE_BRANCH:-}" ]; then
+    git -C "$DIR" checkout "$AGENTPLANE_BRANCH"
+    git -C "$DIR" reset --hard "origin/$AGENTPLANE_BRANCH"
+  fi
+else
+  echo "cloning $REPO"
+  if [ -n "${AGENTPLANE_BRANCH:-}" ]; then
+    git clone --branch "$AGENTPLANE_BRANCH" "$REPO" "$DIR"
+  else
+    git clone "$REPO" "$DIR"
+  fi
+fi`
+
+	env := []corev1.EnvVar{
+		{Name: "AGENTPLANE_REPOSITORY", Value: ws.Repository},
+		{Name: "AGENTPLANE_WORKSPACE", Value: mount},
+	}
+	if ws.Branch != "" {
+		env = append(env, corev1.EnvVar{Name: "AGENTPLANE_BRANCH", Value: ws.Branch})
+	}
+	mounts := []corev1.VolumeMount{{Name: workspaceVolumeName, MountPath: mount}}
+	if hasCredential {
+		env = append(env, corev1.EnvVar{
+			Name:  "AGENTPLANE_GIT_CREDENTIAL_FILE",
+			Value: gitCredentialMountPath + "/token",
+		})
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      "git-credential",
+			MountPath: gitCredentialMountPath,
+			ReadOnly:  true,
+		})
+	}
+
+	return corev1.Container{
+		Name:         "clone",
+		Image:        "alpine/git:latest",
+		Command:      []string{"/bin/sh", "-c", script},
+		Env:          env,
+		VolumeMounts: mounts,
+	}
 }
 
 // reconcileRuntime materializes the agent runtime as an owned Deployment (and
@@ -408,13 +583,37 @@ func agentRuntimeLabels(agent *corev1alpha1.Agent) map[string]string {
 // where the Registry is and which Agent to load; the container reads its config
 // from the Registry (see docs/runtime-protocol.md). Agent Plane does not do inference —
 // the image is user-supplied.
+//
+// When spec.workspace is set the pod additionally gets the working tree: a
+// clone init container populates a PersistentVolumeClaim, and the runtime
+// container mounts it. That is what lets a coding agent keep a checkout, its
+// branches, and its build cache across restarts.
 func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alpha1.Agent) error {
 	rt := agent.Spec.Runtime
+	ws := agent.Spec.Workspace
 	labels := agentRuntimeLabels(agent)
 	name := agent.Name + "-runtime"
 	registryURL := r.RegistryURL
 	if registryURL == "" {
 		registryURL = "http://agent-plane-registry.agent-plane-system.svc:9090"
+	}
+
+	// Resolve the git credential to a Secret name before touching the Deployment,
+	// so a missing Credential surfaces as a reconcile error rather than a pod
+	// that crash-loops on an absent volume.
+	gitSecret := ""
+	if ws != nil && ws.CredentialRef != nil {
+		var cred corev1alpha1.Credential
+		if err := r.Get(ctx, types.NamespacedName{Namespace: agent.Namespace, Name: ws.CredentialRef.Name}, &cred); err != nil {
+			return fmt.Errorf("resolve workspace credential %q: %w", ws.CredentialRef.Name, err)
+		}
+		gitSecret = cred.Spec.SecretRef.Name
+	}
+
+	if ws != nil {
+		if err := r.reconcileWorkspace(ctx, agent); err != nil {
+			return err
+		}
 	}
 
 	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: agent.Namespace}}
@@ -438,6 +637,51 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 		if rt.Port != 0 {
 			container.Ports = []corev1.ContainerPort{{Name: portNameHTTP, ContainerPort: rt.Port}}
 		}
+
+		if ws == nil {
+			// Clear anything left behind by a workspace that was removed.
+			dep.Spec.Strategy = appsv1.DeploymentStrategy{}
+			dep.Spec.Template.Spec.InitContainers = nil
+			dep.Spec.Template.Spec.Volumes = nil
+		} else {
+			mount := workspaceMountPath(ws)
+			container.Env = append(container.Env, corev1.EnvVar{
+				Name: "AGENTPLANE_WORKSPACE", Value: mount,
+			})
+			container.VolumeMounts = []corev1.VolumeMount{
+				{Name: workspaceVolumeName, MountPath: mount},
+			}
+
+			// A working tree has exactly one writer. RollingUpdate would start the
+			// new pod before the old one exits, so two agents would edit the same
+			// checkout — and with ReadWriteOnce the new pod would simply fail to
+			// schedule. Recreate at one replica is the only correct combination.
+			one := int32(1)
+			dep.Spec.Replicas = &one
+			dep.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+
+			volumes := []corev1.Volume{{
+				Name: workspaceVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: workspaceClaimName(agent),
+					},
+				},
+			}}
+			if gitSecret != "" {
+				volumes = append(volumes, corev1.Volume{
+					Name: "git-credential",
+					VolumeSource: corev1.VolumeSource{
+						Secret: &corev1.SecretVolumeSource{SecretName: gitSecret},
+					},
+				})
+			}
+			dep.Spec.Template.Spec.Volumes = volumes
+			dep.Spec.Template.Spec.InitContainers = []corev1.Container{
+				cloneInitContainer(agent, gitSecret != ""),
+			}
+		}
+
 		dep.Spec.Template.Spec.Containers = []corev1.Container{container}
 		return controllerutil.SetControllerReference(agent, dep, r.Scheme)
 	}); err != nil {
@@ -463,5 +707,95 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 	if err := r.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: name}, &live); err == nil {
 		agent.Status.RuntimeAvailableReplicas = live.Status.AvailableReplicas
 	}
+	if ws != nil {
+		agent.Status.WorkspaceClaim = workspaceClaimName(agent)
+	} else {
+		agent.Status.WorkspaceClaim = ""
+	}
+	return nil
+}
+
+// peerServiceName is the Service other Agents dial to consult this one.
+func peerServiceName(agent *corev1alpha1.Agent) string {
+	return agent.Name + "-peer"
+}
+
+// peerViolations reports peer Tools that cannot resolve to a working endpoint.
+//
+// Deliberately *not* reported: a peer that exists and is exposed but is
+// currently Degraded or has no ready replicas. That is a transient runtime
+// condition — failing the caller for it would make one broken repository's agent
+// cascade into every agent that consults it.
+func (r *AgentReconciler) peerViolations(ctx context.Context, agent *corev1alpha1.Agent, peers []peerRef) []string {
+	var out []string
+	for _, p := range peers {
+		if p.agent == agent.Name {
+			out = append(out, fmt.Sprintf("tool %q points at this Agent itself; an Agent cannot consult itself", p.tool))
+			continue
+		}
+		var target corev1alpha1.Agent
+		switch err := r.Get(ctx, types.NamespacedName{Namespace: agent.Namespace, Name: p.agent}, &target); {
+		case apierrors.IsNotFound(err):
+			out = append(out, fmt.Sprintf("tool %q references Agent %q, which does not exist", p.tool, p.agent))
+			continue
+		case err != nil:
+			continue // transient; the next reconcile retries
+		}
+		if target.Spec.Expose == nil {
+			out = append(out, fmt.Sprintf(
+				"tool %q references Agent %q, which does not set spec.expose and so answers no peers", p.tool, p.agent))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// PeerEndpointFor returns the in-cluster MCP address of an exposed Agent, or ""
+// when the Agent does not expose one. Exported because the Registry resolves
+// peer Tools with the same rule the Operator publishes — keeping one definition
+// stops the two from disagreeing about where a peer lives.
+func PeerEndpointFor(agent *corev1alpha1.Agent) string {
+	if agent.Spec.Expose == nil {
+		return ""
+	}
+	port := agent.Spec.Expose.Port
+	if port == 0 {
+		port = 8080
+	}
+	return fmt.Sprintf("http://%s-peer.%s.svc:%d", agent.Name, agent.Namespace, port)
+}
+
+// reconcilePeer publishes an exposed Agent's runtime under its own Service, so
+// other Agents reach it at a stable address that does not change if the runtime
+// Service's port is later repurposed.
+//
+// No new workload is created — the Service selects the same runtime pods. What
+// this adds is an addressable identity for the Agent *as a peer*, which is what
+// a referencing Tool resolves to.
+func (r *AgentReconciler) reconcilePeer(ctx context.Context, agent *corev1alpha1.Agent) error {
+	port := agent.Spec.Expose.Port
+	if port == 0 {
+		port = 8080
+	}
+	labels := agentRuntimeLabels(agent)
+
+	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{
+		Name: peerServiceName(agent), Namespace: agent.Namespace,
+	}}
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, svc, func() error {
+		svc.Labels = labels
+		svc.Spec.Selector = labels
+		svc.Spec.Ports = []corev1.ServicePort{{
+			Name:       portNameMCP,
+			Port:       port,
+			TargetPort: intstr.FromInt32(port),
+			Protocol:   corev1.ProtocolTCP,
+		}}
+		return controllerutil.SetControllerReference(agent, svc, r.Scheme)
+	}); err != nil {
+		return err
+	}
+
+	agent.Status.PeerEndpoint = PeerEndpointFor(agent)
 	return nil
 }

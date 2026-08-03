@@ -95,6 +95,77 @@ type AgentSpec struct {
 	// bring your own runtime.
 	// +optional
 	Runtime *AgentRuntimeSpec `json:"runtime,omitempty"`
+
+	// workspace binds this Agent to one source repository. The Operator clones it
+	// into a persistent volume the runtime pod mounts, so a coding agent
+	// (Claude Code, Codex, OpenCode, …) has a working tree that survives
+	// restarts.
+	//
+	// One Agent owns one repository. Cross-repository work is expressed by
+	// referencing another Agent as a Tool rather than by mounting a second repo:
+	// see spec.expose. That keeps each working tree single-writer, and makes the
+	// dependency between repositories a declared, policeable edge instead of a
+	// shared mount.
+	// +optional
+	Workspace *AgentWorkspaceSpec `json:"workspace,omitempty"`
+
+	// expose, when set, publishes this Agent's runtime as an MCP endpoint so
+	// other Agents can consult it. Peers reach it the ordinary way — a Tool of
+	// type mcp naming this Agent — which means Policy and ToolPolicy govern
+	// agent-to-agent traffic with no separate authorization model.
+	// +optional
+	Expose *AgentExposeSpec `json:"expose,omitempty"`
+}
+
+// AgentWorkspaceSpec binds an Agent to a source repository.
+type AgentWorkspaceSpec struct {
+	// repository is the clone URL (https or ssh).
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	Repository string `json:"repository"`
+
+	// branch to check out. Defaults to the repository's default branch.
+	// +optional
+	Branch string `json:"branch,omitempty"`
+
+	// credentialRef references a Credential whose Secret holds the git
+	// credential (a token, or an SSH key). It is mounted into the clone step,
+	// never passed as an environment value.
+	// +optional
+	CredentialRef *LocalReference `json:"credentialRef,omitempty"`
+
+	// mountPath is where the working tree appears in the runtime container.
+	// +kubebuilder:default=/workspace
+	// +optional
+	MountPath string `json:"mountPath,omitempty"`
+
+	// size is the persistent volume request for the working tree.
+	// +kubebuilder:default="10Gi"
+	// +optional
+	Size string `json:"size,omitempty"`
+
+	// storageClassName selects the StorageClass for the working tree. Omit to
+	// use the cluster default.
+	// +optional
+	StorageClassName *string `json:"storageClassName,omitempty"`
+}
+
+// AgentExposeSpec publishes an Agent's runtime as an MCP endpoint for peers.
+type AgentExposeSpec struct {
+	// port the runtime serves MCP on. Must match what the runtime image
+	// listens on; the Operator only publishes it.
+	// +kubebuilder:default=8080
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	Port int32 `json:"port,omitempty"`
+
+	// description tells a peer Agent's model what this Agent is good for — it
+	// becomes the tool description on the other side, so write it for a model
+	// deciding whether to ask ("Owns the payments API; answers questions about
+	// its schema and endpoints"), not as an internal note.
+	// +optional
+	Description string `json:"description,omitempty"`
 }
 
 // ApplyClassDefaults returns a copy of spec with unset optional references
@@ -120,6 +191,12 @@ func ApplyClassDefaults(spec AgentSpec, class *AgentClass) AgentSpec {
 	}
 	if len(spec.ToolPolicyRefs) == 0 && len(class.Spec.DefaultToolPolicyRefs) > 0 {
 		spec.ToolPolicyRefs = class.Spec.DefaultToolPolicyRefs
+	}
+	if len(spec.ToolRefs) == 0 && len(class.Spec.DefaultToolRefs) > 0 {
+		spec.ToolRefs = class.Spec.DefaultToolRefs
+	}
+	if len(spec.SkillRefs) == 0 && len(class.Spec.DefaultSkillRefs) > 0 {
+		spec.SkillRefs = class.Spec.DefaultSkillRefs
 	}
 	return spec
 }
@@ -196,6 +273,17 @@ type AgentStatus struct {
 	// available replicas (only when spec.runtime is set).
 	// +optional
 	RuntimeAvailableReplicas int32 `json:"runtimeAvailableReplicas,omitempty"`
+
+	// peerEndpoint is the in-cluster MCP address other Agents use to consult
+	// this one (only when spec.expose is set). Published here so a peer's Tool
+	// resolves the same way an MCPServer-backed Tool does.
+	// +optional
+	PeerEndpoint string `json:"peerEndpoint,omitempty"`
+
+	// workspaceClaim names the PersistentVolumeClaim holding this Agent's
+	// working tree (only when spec.workspace is set).
+	// +optional
+	WorkspaceClaim string `json:"workspaceClaim,omitempty"`
 }
 
 // +kubebuilder:object:root=true
