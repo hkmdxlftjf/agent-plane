@@ -157,20 +157,52 @@ type runner struct {
 // modelEnv builds the environment the CLI authenticates with. The Registry
 // serves Secret *coordinates*; the value is read here through the pod's own
 // RBAC and handed to the child process, never written to the working tree.
+//
+// The Model's endpoint becomes ANTHROPIC_BASE_URL, which is what lets an Agent
+// run against a gateway or proxy rather than the public API. Dropping it would
+// silently send every request to api.anthropic.com no matter what the Model
+// declared.
+//
+// Which variable carries the credential depends on the endpoint. The public API
+// authenticates with an API key (ANTHROPIC_API_KEY); gateways commonly expect a
+// bearer token instead (ANTHROPIC_AUTH_TOKEN), and sending a bearer token as an
+// API key fails with an unhelpful 401. Setting both is worse than either — the
+// CLI rejects the request outright — so exactly one is set. See
+// credentialEnvName for which, and how to override it.
 func modelEnv(ctx context.Context, sec *secrets.Reader, model *sdk.Model) ([]string, error) {
 	env := os.Environ()
-	if model == nil || model.SecretName == "" || sec == nil {
+	if model == nil {
+		return env, nil
+	}
+	if model.Endpoint != "" {
+		env = append(env, "ANTHROPIC_BASE_URL="+model.Endpoint)
+	}
+	if model.ModelName != "" {
+		env = append(env, "ANTHROPIC_MODEL="+model.ModelName)
+	}
+	if model.SecretName == "" || sec == nil {
 		return env, nil
 	}
 	key, err := sec.Read(ctx, model.SecretName, model.SecretKey)
 	if err != nil {
 		return nil, err
 	}
-	env = append(env, "ANTHROPIC_API_KEY="+key)
-	if model.ModelName != "" {
-		env = append(env, "ANTHROPIC_MODEL="+model.ModelName)
-	}
+	env = append(env, credentialEnvName(model)+"="+key)
 	return env, nil
+}
+
+// credentialEnvName picks the variable the credential is delivered in.
+//
+// A custom endpoint is the signal for the bearer form: the public API is the
+// only one this runner can assume takes an x-api-key, and every gateway we have
+// seen expects an Authorization bearer token. An Agent pointing at its own
+// endpoint that genuinely wants the API-key form can set the env var directly
+// through spec.runtime.env, which wins because it is already in os.Environ().
+func credentialEnvName(model *sdk.Model) string {
+	if model.Endpoint != "" {
+		return "ANTHROPIC_AUTH_TOKEN"
+	}
+	return "ANTHROPIC_API_KEY"
 }
 
 // project writes the Registry config into the files Claude Code reads on

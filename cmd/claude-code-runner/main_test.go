@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	peerTool  = "ask-web-agent"
-	peerAddr  = "http://web-agent-peer.default.svc:8080"
-	skillName = "refunds"
+	peerTool   = "ask-web-agent"
+	peerAddr   = "http://web-agent-peer.default.svc:8080"
+	skillName  = "refunds"
+	gatewayURL = "http://gateway:3000"
 )
 
 func testConfig() *sdk.AgentConfig {
@@ -316,4 +317,81 @@ func TestTurnsAreSerialized(t *testing.T) {
 		}(i)
 	}
 	wg.Wait() // the race detector fails this if the lock is missing
+}
+
+// The Model's endpoint must reach the CLI, or every request goes to the public
+// API regardless of what the Model declared — the failure a gateway user hits
+// first, and a silent one.
+func TestModelEnvCarriesEndpointAndCredentialForm(t *testing.T) {
+	tests := []struct {
+		name        string
+		model       *sdk.Model
+		wantVar     string // the credential variable that must be set
+		absentVar   string // the one that must not be
+		wantBaseURL string
+	}{
+		{
+			name:      "public API uses an API key",
+			model:     &sdk.Model{ModelName: "claude-opus-5"},
+			wantVar:   "",
+			absentVar: "",
+		},
+		{
+			name:        "a custom endpoint switches to the bearer form",
+			model:       &sdk.Model{ModelName: "claude-opus-5", Endpoint: gatewayURL},
+			wantBaseURL: gatewayURL,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// modelEnv starts from os.Environ(), so an inherited ANTHROPIC_*
+			// from the developer's shell would mask what the Model actually sets.
+			t.Setenv("ANTHROPIC_BASE_URL", "")
+			t.Setenv("ANTHROPIC_MODEL", "")
+
+			// No secrets.Reader, so no credential is read; this covers the
+			// endpoint/model wiring, which is what silently went missing.
+			env, err := modelEnv(context.Background(), nil, tc.model)
+			if err != nil {
+				t.Fatalf("modelEnv: %v", err)
+			}
+			// Later entries win in exec's environment, so scan in order and let
+			// the last assignment stand — the same rule the child process applies.
+			got := map[string]string{}
+			for _, e := range env {
+				if k, v, ok := strings.Cut(e, "="); ok {
+					got[k] = v
+				}
+			}
+			if got["ANTHROPIC_BASE_URL"] != tc.wantBaseURL {
+				t.Errorf("ANTHROPIC_BASE_URL = %q, want %q", got["ANTHROPIC_BASE_URL"], tc.wantBaseURL)
+			}
+			if got["ANTHROPIC_MODEL"] != tc.model.ModelName {
+				t.Errorf("ANTHROPIC_MODEL = %q, want %q", got["ANTHROPIC_MODEL"], tc.model.ModelName)
+			}
+		})
+	}
+}
+
+// Sending a bearer token as an API key fails with an unhelpful 401, so the
+// variable is chosen by whether an endpoint was declared.
+func TestCredentialEnvName(t *testing.T) {
+	if got := credentialEnvName(&sdk.Model{}); got != "ANTHROPIC_API_KEY" {
+		t.Errorf("public API: got %q, want ANTHROPIC_API_KEY", got)
+	}
+	if got := credentialEnvName(&sdk.Model{Endpoint: gatewayURL}); got != "ANTHROPIC_AUTH_TOKEN" {
+		t.Errorf("gateway: got %q, want ANTHROPIC_AUTH_TOKEN", got)
+	}
+}
+
+// A nil Model must not panic — an Agent can be Ready before its Model view is
+// populated.
+func TestModelEnvNilModel(t *testing.T) {
+	env, err := modelEnv(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("modelEnv(nil): %v", err)
+	}
+	if len(env) == 0 {
+		t.Error("expected the process environment to be preserved")
+	}
 }
