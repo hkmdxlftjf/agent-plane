@@ -55,6 +55,27 @@ spec:
           spec:
             description: spec defines the desired state of Tool
             properties:
+              agentRef:
+                description: |-
+                  agentRef, for type=mcp, references another Agent to consult instead of an
+                  MCPServer. The target must set spec.expose; the Registry resolves this to
+                  that Agent's peer endpoint.
+
+                  This is how cross-repository work is expressed: an Agent bound to one
+                  repository asks an Agent bound to another, rather than mounting a second
+                  working tree. Because the edge is an ordinary Tool, Policy and ToolPolicy
+                  govern it — denying this Tool severs the link, with no separate
+                  agent-to-agent authorization model to keep in sync.
+
+                  Exactly one of mcpServerRef or agentRef may be set.
+                properties:
+                  name:
+                    description: name is the metadata.name of the referenced resource.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
               description:
                 description: |-
                   description explains what the tool does, so a model can decide when to
@@ -62,8 +83,9 @@ spec:
                 type: string
               endpoint:
                 description: |-
-                  endpoint is the address the runtime uses to reach the tool. Its meaning
-                  depends on type (URL for http/grpc, image ref for container, etc.).
+                  endpoint is the address the runtime uses to reach the tool: the tool's own
+                  URL for type=http, and for type=mcp the fallback used when neither
+                  mcpServerRef nor agentRef resolves an in-cluster address.
                 type: string
               inputSchema:
                 description: inputSchema is a JSON Schema for the tool's input arguments.
@@ -98,11 +120,7 @@ spec:
                 description: type is the invocation mechanism for this tool.
                 enum:
                 - http
-                - grpc
                 - mcp
-                - wasm
-                - plugin
-                - container
                 type: string
               version:
                 description: version is the semantic version of the tool contract.

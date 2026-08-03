@@ -52,7 +52,7 @@ Resources.
 | **Agent** | Declares an agent as references to the capabilities it is built from. |
 | **AgentClass** | Reusable defaults inherited by Agents. |
 | **Model** | A model endpoint (openai/anthropic/azure/ollama/vllm/openrouter/custom). |
-| **Tool** | A single executable capability the agent *calls* (http/grpc/mcp/wasm/plugin/container). |
+| **Tool** | A single executable capability the agent *calls* — `http` (POST JSON) or `mcp` (an MCPServer, or another Agent via `agentRef`). |
 | **ToolSet** | A named bundle of Tools. |
 | **Skill** | A markdown instruction pack (SKILL.md-style) that teaches the agent *how* to do something; its `allowedTools` confine the agent once the skill is loaded. |
 | **MCPServer** | An MCP server; the Operator materializes it into a Deployment + Service. |
@@ -287,6 +287,10 @@ in. See **[docs/adapter-protocol.md](docs/adapter-protocol.md)** and
 - Multi-tenant scoping (Namespace / Cluster / Tenant)
 - Metrics dashboards and tracing wiring
 - Reference runtime integrations (LangGraph, Agents SDK, CrewAI)
+- Further `Tool` types — `grpc`, `wasm`, `plugin`, `container`. These were once
+  listed in the CRD enum with no implementation behind them, so such a Tool
+  applied cleanly and failed only when a runtime tried to call it; they are
+  tracked here until the Registry resolves them.
 
 ## License
 
