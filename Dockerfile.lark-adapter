@@ -1,0 +1,24 @@
+# Build image for lark-adapter: the inbound event source for Lark (Feishu).
+#
+# The adapter dials out to Lark and holds a WebSocket, so nothing needs to reach
+# this pod from the internet — no ingress, no TLS certificate, no public webhook
+# URL. It only needs egress and the Agent's in-cluster Service.
+FROM golang:1.26 AS builder
+ARG TARGETARCH
+WORKDIR /workspace
+COPY go.mod go.mod
+COPY go.sum go.sum
+RUN go mod download
+COPY cmd/ cmd/
+COPY api/ api/
+COPY internal/ internal/
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -a -o lark-adapter ./cmd/lark-adapter
+
+# Distroless is enough here: the adapter execs nothing. It needs CA certificates
+# to dial Lark over TLS, which the nonroot base already carries.
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+COPY --from=builder /workspace/lark-adapter /lark-adapter
+USER 65532:65532
+
+ENTRYPOINT ["/lark-adapter"]

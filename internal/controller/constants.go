@@ -53,7 +53,7 @@ const (
 	testTriggerName  = "lark"
 	testAnyModel     = "any-model"
 	testMissingName  = "does-not-exist"
-	testCodingImage  = "example/claude-code:v1"
+	testCodingImage  = "example/coding-agent:v1"
 )
 
 // ownedLabels is the label set for a workload the Operator materializes:
