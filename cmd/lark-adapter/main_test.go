@@ -1,0 +1,276 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+const (
+	testChatID  = "oc_chat_123"
+	testAgentEP = "http://agent:8080"
+	testAppID   = "cli_test"
+	testSecret  = "secret_test"
+)
+
+// writeCredential lays out the Secret the way the Operator mounts it: one file
+// per key, not environment values.
+func writeCredential(t *testing.T, keys map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for k, v := range keys {
+		if err := os.WriteFile(filepath.Join(dir, k), []byte(v), 0o600); err != nil {
+			t.Fatalf("write %s: %v", k, err)
+		}
+	}
+	return dir
+}
+
+func TestLoadConfig(t *testing.T) {
+	dir := writeCredential(t, map[string]string{
+		// A trailing newline is what `kubectl create secret --from-file` and most
+		// editors produce; carrying it into the app id makes Lark reject the
+		// handshake with an error that does not mention whitespace.
+		keyAppID:     testAppID + "\n",
+		keyAppSecret: testSecret,
+	})
+	t.Setenv("AGENTPLANE_AGENT_ENDPOINT", "http://agent.default.svc:8080")
+	t.Setenv("AGENTPLANE_AGENT_NAME", "support-agent")
+	t.Setenv("AGENTPLANE_CREDENTIAL_PATH", dir)
+	t.Setenv("AGENTPLANE_TRIGGER_CONFIG", `{"replyInThread":false,"timeoutSeconds":90}`)
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.AppID != testAppID {
+		t.Errorf("AppID = %q, want the value trimmed of whitespace", cfg.AppID)
+	}
+	if cfg.ReplyInThread {
+		t.Error("replyInThread from spec.config was ignored")
+	}
+	if cfg.Timeout != 90*time.Second {
+		t.Errorf("Timeout = %v, want 90s from spec.config", cfg.Timeout)
+	}
+}
+
+// spec.config is optional, and its absence must leave the defaults intact rather
+// than zeroing the timeout — a zero timeout fails every request instantly.
+func TestLoadConfigDefaults(t *testing.T) {
+	dir := writeCredential(t, map[string]string{keyAppID: testAppID, keyAppSecret: testSecret})
+	t.Setenv("AGENTPLANE_AGENT_ENDPOINT", testAgentEP)
+	t.Setenv("AGENTPLANE_CREDENTIAL_PATH", dir)
+	t.Setenv("AGENTPLANE_TRIGGER_CONFIG", "")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.Timeout <= 0 {
+		t.Errorf("Timeout = %v, want a usable default", cfg.Timeout)
+	}
+	if !cfg.ReplyInThread {
+		t.Error("ReplyInThread should default to true")
+	}
+}
+
+// Every one of these is a misconfiguration that would otherwise surface as a
+// confusing runtime failure long after apply.
+func TestLoadConfigRejectsIncompleteWiring(t *testing.T) {
+	full := map[string]string{keyAppID: testAppID, keyAppSecret: testSecret}
+
+	tests := []struct {
+		name     string
+		endpoint string
+		creds    map[string]string
+		noCred   bool
+		wantIn   string
+	}{
+		{
+			name:   "no endpoint means the Agent has no runtime port",
+			creds:  full,
+			wantIn: "AGENTPLANE_AGENT_ENDPOINT",
+		},
+		{
+			name:     "no credential mount",
+			endpoint: testAgentEP,
+			noCred:   true,
+			wantIn:   "AGENTPLANE_CREDENTIAL_PATH",
+		},
+		{
+			name:     "right Secret, wrong keys",
+			endpoint: testAgentEP,
+			creds:    map[string]string{"token": "x"},
+			wantIn:   keyAppID,
+		},
+		{
+			name:     "an empty key is as broken as a missing one",
+			endpoint: testAgentEP,
+			creds:    map[string]string{keyAppID: testAppID, keyAppSecret: "   "},
+			wantIn:   keyAppSecret,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AGENTPLANE_AGENT_ENDPOINT", tc.endpoint)
+			t.Setenv("AGENTPLANE_TRIGGER_CONFIG", "")
+			if tc.noCred {
+				t.Setenv("AGENTPLANE_CREDENTIAL_PATH", "")
+			} else {
+				t.Setenv("AGENTPLANE_CREDENTIAL_PATH", writeCredential(t, tc.creds))
+			}
+
+			_, err := loadConfig()
+			if err == nil {
+				t.Fatal("expected an error naming what is missing")
+			}
+			if !strings.Contains(err.Error(), tc.wantIn) {
+				t.Errorf("error = %q, want it to name %q", err, tc.wantIn)
+			}
+		})
+	}
+}
+
+// Rule 2 is the one field with real consequences: the platform's conversation id
+// becomes the sessionId, so a chat gets multi-turn memory and two chats never
+// share history.
+func TestAskUsesTheConversationIDAsSession(t *testing.T) {
+	var got chatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			t.Errorf("path = %q, want /api/chat", r.URL.Path)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(chatResponse{Answer: "hello"})
+	}))
+	defer srv.Close()
+
+	a := &adapter{cfg: &config{Endpoint: srv.URL, Timeout: time.Minute}, http: srv.Client()}
+	answer, err := a.ask(context.Background(), testChatID, "hi")
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if answer != "hello" {
+		t.Errorf("answer = %q, want %q", answer, "hello")
+	}
+	if got.SessionID != testChatID {
+		t.Errorf("sessionId = %q, want the chat id", got.SessionID)
+	}
+	if got.Message != "hi" {
+		t.Errorf("message = %q, want the user's text", got.Message)
+	}
+}
+
+// A trailing slash on the injected endpoint must not produce //api/chat, which
+// some routers treat as a different path.
+func TestAskNormalizesTheEndpoint(t *testing.T) {
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_ = json.NewEncoder(w).Encode(chatResponse{Answer: "ok"})
+	}))
+	defer srv.Close()
+
+	a := &adapter{cfg: &config{Endpoint: srv.URL + "/", Timeout: time.Minute}, http: srv.Client()}
+	if _, err := a.ask(context.Background(), testChatID, "hi"); err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if path != "/api/chat" {
+		t.Errorf("path = %q, want /api/chat", path)
+	}
+}
+
+// The contract returns runtime failures in the body with HTTP 200, so checking
+// only the status code would report a failed turn as a successful one.
+func TestAskTreatsAnErrorBodyAsFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(chatResponse{Error: "model unavailable"})
+	}))
+	defer srv.Close()
+
+	a := &adapter{cfg: &config{Endpoint: srv.URL, Timeout: time.Minute}, http: srv.Client()}
+	_, err := a.ask(context.Background(), testChatID, "hi")
+	if err == nil {
+		t.Fatal("an error body with HTTP 200 was reported as success")
+	}
+	if !strings.Contains(err.Error(), "model unavailable") {
+		t.Errorf("error = %q, want the runtime's message", err)
+	}
+}
+
+// An empty answer would post a blank message into the chat, which reads as the
+// bot ignoring the user.
+func TestAskRejectsAnEmptyAnswer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(chatResponse{})
+	}))
+	defer srv.Close()
+
+	a := &adapter{cfg: &config{Endpoint: srv.URL, Timeout: time.Minute}, http: srv.Client()}
+	if _, err := a.ask(context.Background(), testChatID, "hi"); err == nil {
+		t.Fatal("an empty answer was accepted")
+	}
+}
+
+func TestExtractText(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"a text message", `{"text":"how do I deploy?"}`, "how do I deploy?"},
+		{"surrounding whitespace is dropped", `{"text":"  hi  "}`, "hi"},
+		// Forwarding an unparseable payload raw would hand the model a blob of
+		// JSON to reason about instead of a question.
+		{"malformed content is skipped", `not json`, ""},
+		{"an empty message is skipped", `{"text":""}`, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractText(tc.content); got != tc.want {
+				t.Errorf("extractText(%q) = %q, want %q", tc.content, got, tc.want)
+			}
+		})
+	}
+}
+
+// The readiness probe must answer while the process is alive. It intentionally
+// reports only that much: the contract is explicit that a Running Trigger means
+// "the process exists", not that Lark accepted the connection — only the adapter
+// knows the latter, and nothing reports it back.
+func TestHealthEndpoint(t *testing.T) {
+	a := &adapter{cfg: &config{HealthAddr: "127.0.0.1:0"}}
+
+	ln, err := net.Listen("tcp", a.cfg.HealthAddr)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", a.healthz)
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = srv.Serve(ln) }()
+	defer func() { _ = srv.Close() }()
+
+	resp, err := http.Get("http://" + ln.Addr().String() + "/healthz")
+	if err != nil {
+		t.Fatalf("get /healthz: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if strings.TrimSpace(string(body)) != "ok" {
+		t.Errorf("body = %q, want ok", body)
+	}
+}

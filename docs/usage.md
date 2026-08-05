@@ -494,7 +494,7 @@ spec:
     branch: main
     credentialRef: {name: git-token}
   runtime:
-    image: ghcr.io/hkmdxlftjf/agent-plane-claude-code-runner:latest
+    image: your-coding-agent:latest
     port: 8080
 ```
 
@@ -568,38 +568,45 @@ across every agent that consults it.
 
 Worked example: `config/samples/coding/repo-agents.yaml`.
 
-### The runner image
+### Adapting a coding agent
 
-`Dockerfile.claude-code-runner` builds what runs in the pod: a Go shell plus the
-Claude Code CLI. The shell does two things and nothing else —
+Coding agents (Claude Code, Codex, OpenCode) are CLIs, not HTTP servers, and they
+accept no injected system prompt or tool list. The way to run one here is
+**projection**: a thin shell writes the Registry config into the files the CLI
+already reads on startup, and execs it per turn. Nothing in the CLI is patched.
 
-- **Projection.** Claude Code accepts no injected system prompt or tool list, but
-  it *does* read `CLAUDE.md` and `.mcp.json` from its working directory. So the
-  Agent's `promptRef`, Skills, and mcp Tools (including peer Agents) are written
-  into those files on startup and again on every hot reload. The CLI is unpatched;
-  the same approach carries to any coding agent that reads files on startup.
-- **A turn.** `POST /api/chat` execs `claude --print --output-format json`,
-  mapping the caller's `sessionId` to the CLI's own session so follow-ups resume
-  rather than start cold. Turns are serialized — one working tree, one writer.
+A shell doing this has two jobs:
 
-Two limits worth knowing:
+- **Projection.** Write the Agent's `promptRef`, Skills, and mcp Tools (including
+  peer Agents) into whatever the CLI reads — an instructions file and an MCP
+  config, typically — on startup and again on every hot reload.
+- **A turn.** Serve `POST /api/chat` (§runtime protocol), exec the CLI, and map
+  the caller's `sessionId` to the CLI's own session so follow-ups resume rather
+  than start cold. Serialize turns: one working tree, one writer.
 
-- **Skill bodies are inlined, not disclosed on demand.** Claude Code has no
-  `load_skill` tool to call, so the catalog approach §11 describes does not apply
-  here. Prefer a few focused Skills over many broad ones on this runtime.
-- **ToolPolicy governs the projected MCP tools, not Claude Code's built-ins.**
-  `Bash`, `Write`, and friends are not Tool CRs, so a ToolPolicy says nothing
-  about them, and `maxCallsPerSession` has no CLI equivalent. The runner **logs
+Two limits are worth knowing before choosing this shape:
+
+- **Skills usually cannot be disclosed on demand.** A CLI with no `load_skill`
+  tool cannot fetch a Skill body mid-turn, so the catalog approach §11 describes
+  does not apply — every mounted Skill rides along in each turn's context. Prefer
+  a few focused Skills over many broad ones.
+- **ToolPolicy governs declared Tools, not the CLI's built-ins.** `Bash`,
+  `Write`, and friends are not Tool CRs, so a ToolPolicy says nothing about them,
+  and `maxCallsPerSession` typically has no CLI equivalent. A shell should **log
   each unenforceable rule at startup** rather than letting a policy look applied
   when half of it is inert.
+- **Permission prompts have no one to answer them.** A CLI that asks before
+  writing will find no human at a terminal; depending on the tool it either
+  denies silently or stalls. Check how yours behaves headlessly *before* building
+  on it — a runtime that reports success while every write was refused is worse
+  than one that fails outright.
 
 ### Talking to it from an IM client
 
 Combine this with a `Trigger` (§13) and a repository's agent becomes reachable
 from Lark or DingTalk. One caveat: the adapter contract expects the runtime to
-serve `POST /api/chat`, and these coding tools are CLIs rather than HTTP
-servers — the runner image wraps them. That wrapper is the image's business; the
-contract does not change.
+serve `POST /api/chat`, and a coding CLI is not an HTTP server — the shell above
+wraps it. That wrapper is the image's business; the contract does not change.
 
 ---
 

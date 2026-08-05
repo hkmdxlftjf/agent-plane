@@ -139,7 +139,39 @@ so, rather than injecting an address nothing listens on.
 
 ---
 
-## 5. A minimal adapter, in outline
+## 5. The reference implementation
+
+`cmd/lark-adapter` implements this contract for Lark (Feishu) and is built by
+`Dockerfile.lark-adapter`. Read it as the worked answer to everything below;
+these are the decisions it makes that any adapter faces.
+
+**Long connection over webhook.** The adapter dials out to Lark and holds a
+WebSocket, so nothing has to reach the pod from the internet — no ingress, no TLS
+certificate, no public URL to register. A cluster with only egress can run it.
+
+**A failed turn is answered, not retried.** The event handler returns nil even
+when the agent errored, because returning an error makes the SDK treat the event
+as undelivered and Lark redelivers it — so a broken agent would be asked the same
+question over and over. The user already has the error in the chat.
+
+**Non-text messages get a reply, not silence.** An image or file forwarded raw
+would reach the model as the JSON of its payload. The adapter says it can only
+read text, which is a better failure than a confused answer.
+
+**Credentials are read from files and trimmed.** They arrive as a mount, and a
+trailing newline — what `--from-file` and most editors produce — makes Lark
+reject the handshake with an error that never mentions whitespace.
+
+Configuration it reads from `spec.config`, both optional:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `replyInThread` | `true` | Attach the answer to the message that prompted it. |
+| `timeoutSeconds` | `300` | How long to wait for `/api/chat`. An agent that reads code needs more than an HTTP default. |
+
+---
+
+## 6. A minimal adapter, in outline
 
 ```go
 endpoint := os.Getenv("AGENTPLANE_AGENT_ENDPOINT")
@@ -163,7 +195,7 @@ for ev := range platformEvents {           // your long-lived connection
 
 ---
 
-## 6. Operational notes
+## 7. Operational notes
 
 **Replicas.** `spec.replicas` is capped at 1. A streaming adapter holds one
 connection, and most platforms deliver each event to *every* connection — two
@@ -187,7 +219,7 @@ with the new endpoint; the Trigger watches its Agent.
 
 ---
 
-## 7. Outbound is a different mechanism
+## 8. Outbound is a different mechanism
 
 This contract is for events coming *in*. For the Agent to *call* something —
 sending a proactive message, looking up a record — declare a `Tool`, usually

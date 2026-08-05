@@ -8,12 +8,16 @@ bin/*
 Dockerfile.cross
 
 # `go build ./cmd/<name>` with no -o drops the binary in the repository root,
-# where only bin/ was ignored — one of these was staged for commit once.
-/agent-plane
-/claude-code-runner
-/agent-runtime
-/registry
-/example-mcp
+# where only bin/ was ignored — one of these was staged for commit twice. Ignore
+# every extension-less root file rather than listing each command, which has to
+# be updated whenever a command is added and silently fails when it is not.
+/*
+!/*.*
+!/*/
+!/Dockerfile*
+!/Makefile
+!/PROJECT
+!/LICENSE
 
 # Test binary, built with `go test -c`
 *.test
