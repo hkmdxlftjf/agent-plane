@@ -45,7 +45,7 @@ func TestLoadConfig(t *testing.T) {
 	t.Setenv("AGENTPLANE_AGENT_ENDPOINT", "http://agent.default.svc:8080")
 	t.Setenv("AGENTPLANE_AGENT_NAME", "support-agent")
 	t.Setenv("AGENTPLANE_CREDENTIAL_PATH", dir)
-	t.Setenv("AGENTPLANE_TRIGGER_CONFIG", `{"replyInThread":false,"timeoutSeconds":90}`)
+	t.Setenv("AGENTPLANE_TRIGGER_CONFIG", `{"replyInThread":true,"timeoutSeconds":90}`)
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -54,7 +54,7 @@ func TestLoadConfig(t *testing.T) {
 	if cfg.AppID != testAppID {
 		t.Errorf("AppID = %q, want the value trimmed of whitespace", cfg.AppID)
 	}
-	if cfg.ReplyInThread {
+	if !cfg.ReplyInThread {
 		t.Error("replyInThread from spec.config was ignored")
 	}
 	if cfg.Timeout != 90*time.Second {
@@ -77,8 +77,10 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.Timeout <= 0 {
 		t.Errorf("Timeout = %v, want a usable default", cfg.Timeout)
 	}
-	if !cfg.ReplyInThread {
-		t.Error("ReplyInThread should default to true")
+	// A thread per answer turns a one-on-one chat into collapsed branches, and
+	// the reply is anchored to its message without one.
+	if cfg.ReplyInThread {
+		t.Error("ReplyInThread should default to false")
 	}
 }
 
@@ -272,5 +274,87 @@ func TestHealthEndpoint(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if strings.TrimSpace(string(body)) != "ok" {
 		t.Errorf("body = %q, want ok", body)
+	}
+}
+
+// An agent writes Markdown, and a plain Lark text message renders none of it —
+// the first real conversation through this adapter arrived as literal asterisks
+// and hyphens. A card's lark_md field renders it.
+func TestRenderReplyAsCard(t *testing.T) {
+	a := &adapter{cfg: &config{Card: true}}
+	msgType, content, err := a.renderReply("**bold** and\n- a bullet")
+	if err != nil {
+		t.Fatalf("renderReply: %v", err)
+	}
+	if msgType != "interactive" {
+		t.Errorf("msgType = %q, want interactive", msgType)
+	}
+
+	var card struct {
+		Config   map[string]any `json:"config"`
+		Elements []struct {
+			Tag  string `json:"tag"`
+			Text struct {
+				Tag     string `json:"tag"`
+				Content string `json:"content"`
+			} `json:"text"`
+		} `json:"elements"`
+	}
+	if err := json.Unmarshal([]byte(content), &card); err != nil {
+		t.Fatalf("card is not valid JSON: %v\n%s", err, content)
+	}
+	if len(card.Elements) != 1 {
+		t.Fatalf("elements = %d, want 1", len(card.Elements))
+	}
+	// lark_md is the whole point; a plain "text" tag would render nothing.
+	if card.Elements[0].Text.Tag != "lark_md" {
+		t.Errorf("text tag = %q, want lark_md", card.Elements[0].Text.Tag)
+	}
+	if !strings.Contains(card.Elements[0].Text.Content, "**bold**") {
+		t.Errorf("the answer did not survive into the card: %s", content)
+	}
+}
+
+// Cards are opt-out, because some deployments prefer plain text.
+func TestRenderReplyAsText(t *testing.T) {
+	a := &adapter{cfg: &config{Card: false}}
+	msgType, content, err := a.renderReply("hello")
+	if err != nil {
+		t.Fatalf("renderReply: %v", err)
+	}
+	if msgType != "text" {
+		t.Errorf("msgType = %q, want text", msgType)
+	}
+	var tc textContent
+	if err := json.Unmarshal([]byte(content), &tc); err != nil {
+		t.Fatalf("content is not valid JSON: %v", err)
+	}
+	if tc.Text != "hello" {
+		t.Errorf("text = %q, want hello", tc.Text)
+	}
+}
+
+// Cards are on unless spec.config turns them off.
+func TestCardDefaultsOn(t *testing.T) {
+	dir := writeCredential(t, map[string]string{keyAppID: testAppID, keyAppSecret: testSecret})
+	t.Setenv("AGENTPLANE_AGENT_ENDPOINT", testAgentEP)
+	t.Setenv("AGENTPLANE_CREDENTIAL_PATH", dir)
+	t.Setenv("AGENTPLANE_TRIGGER_CONFIG", "")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if !cfg.Card {
+		t.Error("Card should default to true")
+	}
+
+	t.Setenv("AGENTPLANE_TRIGGER_CONFIG", `{"card":false}`)
+	cfg, err = loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.Card {
+		t.Error("card:false from spec.config was ignored")
 	}
 }

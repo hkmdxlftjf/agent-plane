@@ -68,9 +68,10 @@ spec:
   # not interpret it — the shape is whatever your adapter reads. These two keys
   # are what this adapter looks for; both are optional.
   config:
-    # Keep each answer attached to the message that prompted it, which matters in
-    # a busy group chat.
-    replyInThread: true
+    # Open a thread on each answered message. Off by default — in a one-on-one
+    # chat it turns the conversation into collapsed branches — but worth it in a
+    # busy group chat, where an answer can otherwise drift from its question.
+    replyInThread: false
     # An agent that reads code or searches thinks for a while; too short a
     # timeout shows the user silence mid-answer.
     timeoutSeconds: 300
