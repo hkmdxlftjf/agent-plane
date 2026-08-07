@@ -1,7 +1,7 @@
 # Agent Plane — Kubernetes-Native Agent Control Plane
 
 Agent Plane is a **control plane** for AI Agents, built with the Kubernetes Operator
-pattern. It manages the *declaration, lifecycle, and configuration* of Agents
+pattern. It manages the _declaration, lifecycle, and configuration_ of Agents
 and the resources they are composed from — Models, Tools, Skills, MCP servers,
 Workflows, Prompts, Memory, Policies, and more — as first-class Custom
 Resources.
@@ -14,18 +14,7 @@ Resources.
 
 ## Architecture
 
-```
-                Control Plane                         Data Plane
-  ┌────────────────────────────────────────┐   ┌─────────────────────────┐
-  │  kube-apiserver (CRDs)                 │   │  Agent Runtime          │
-  │        ▲                               │   │  MCP Runtime            │
-  │        │ watch/reconcile               │   │  Tool Runtime           │
-  │  ┌─────┴───────┐    ┌───────────────┐  │   │        ▲                │
-  │  │  Operator   │───▶│   Registry    │◀─┼───┼────────┘ HTTP (config)  │
-  │  │ (this repo) │    │ (cmd/registry)│  │   │  runtimes never call    │
-  │  └─────────────┘    └───────────────┘  │   │  the API server directly│
-  └────────────────────────────────────────┘   └─────────────────────────┘
-```
+<p align="center"><img src="docs/architecture.svg" alt="Agent Plane architecture: the control plane (kube-apiserver, Operator, admission webhooks, Registry) declares and reconciles; the data plane (Agent Runtime, MCP/Tool servers) pulls resolved config from the Registry over HTTP/SSE; inbound events flow in through a Trigger adapter owned by the Operator."></p>
 
 - **Operator** (`cmd/main.go`, `internal/controller/`) watches all Agent Plane
   resources, validates and resolves references, materializes workloads, and
@@ -38,39 +27,39 @@ Resources.
     fresh config whenever the Agent changes (**hot reload**). The Registry
     watches only Agents; the Operator folds dependency changes into the Agent's
     `resolvedConfigHash`, so an Agent event covers any change that matters.
-- **Admission webhooks** (`internal/webhook/v1alpha1/`) validate *structural*
+- **Admission webhooks** (`internal/webhook/v1alpha1/`) validate _structural_
   invariants at apply time (fail fast) for Agent (no duplicate refs), Workflow
   (unique step names, no dangling `next`), and Tool (an `mcp` tool needs an
   `mcpServerRef`). The same checks live in `api/v1alpha1/validation.go` and are
-  reused by the controllers — cross-object *existence* is deliberately left to
+  reused by the controllers — cross-object _existence_ is deliberately left to
   the controllers' eventual consistency so GitOps can apply in any order.
 
 ## Resource model (`core.hkmdxlftjf.io/v1alpha1`)
 
-| Kind | Purpose |
-|------|---------|
-| **Agent** | Declares an agent as references to the capabilities it is built from. |
-| **AgentClass** | Reusable defaults inherited by Agents. |
-| **Model** | A model endpoint (openai/anthropic/azure/ollama/vllm/openrouter/custom). |
-| **Tool** | A single executable capability the agent *calls* — `http` (POST JSON) or `mcp` (an MCPServer, or another Agent via `agentRef`). |
-| **ToolSet** | A named bundle of Tools. |
-| **Skill** | A markdown instruction pack (SKILL.md-style) that teaches the agent *how* to do something; its `allowedTools` confine the agent once the skill is loaded. |
-| **MCPServer** | An MCP server; the Operator materializes it into a Deployment + Service. |
-| **Workflow** | Engine-neutral execution shape (planner/tool/reflect/finish). |
-| **PromptTemplate** | Versioned system/role prompts and few-shot examples. |
-| **Memory** | A memory/storage backend (redis/postgres/vector/graph/s3). |
-| **KnowledgeBase** | A retrieval corpus (RAG). |
-| **Policy** | Coarse allow/deny over models/memory/mcp/tools/workflows. Enforced: the Operator refuses to run an Agent whose refs are denied. |
-| **ToolPolicy** | Per-Tool authorization and per-session call caps. Enforced by the runtime at call time. |
-| **Credential** | Indirects secret material through a Kubernetes Secret. |
-| **Trigger** | An *inbound* event source (IM bot, webhook) feeding an Agent, run as an owned adapter Deployment. |
+| Kind               | Purpose                                                                                                                                                   |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Agent**          | Declares an agent as references to the capabilities it is built from.                                                                                     |
+| **AgentClass**     | Reusable defaults inherited by Agents.                                                                                                                    |
+| **Model**          | A model endpoint (openai/anthropic/azure/ollama/vllm/openrouter/custom).                                                                                  |
+| **Tool**           | A single executable capability the agent _calls_ — `http` (POST JSON) or `mcp` (an MCPServer, or another Agent via `agentRef`).                           |
+| **ToolSet**        | A named bundle of Tools.                                                                                                                                  |
+| **Skill**          | A markdown instruction pack (SKILL.md-style) that teaches the agent _how_ to do something; its `allowedTools` confine the agent once the skill is loaded. |
+| **MCPServer**      | An MCP server; the Operator materializes it into a Deployment + Service.                                                                                  |
+| **Workflow**       | Engine-neutral execution shape (planner/tool/reflect/finish).                                                                                             |
+| **PromptTemplate** | Versioned system/role prompts and few-shot examples.                                                                                                      |
+| **Memory**         | A memory/storage backend (redis/postgres/vector/graph/s3).                                                                                                |
+| **KnowledgeBase**  | A retrieval corpus (RAG).                                                                                                                                 |
+| **Policy**         | Coarse allow/deny over models/memory/mcp/tools/workflows. Enforced: the Operator refuses to run an Agent whose refs are denied.                           |
+| **ToolPolicy**     | Per-Tool authorization and per-session call caps. Enforced by the runtime at call time.                                                                   |
+| **Credential**     | Indirects secret material through a Kubernetes Secret.                                                                                                    |
+| **Trigger**        | An _inbound_ event source (IM bot, webhook) feeding an Agent, run as an owned adapter Deployment.                                                         |
 
 An Agent may additionally bind a **repository** (`spec.workspace`) and publish
-itself to peers (`spec.expose`) — see *Coding agents* below.
+itself to peers (`spec.expose`) — see _Coding agents_ below.
 
 ### The reference controllers
 
-- **`AgentReconciler`** — the *aggregating* pattern. Resolves every reference an
+- **`AgentReconciler`** — the _aggregating_ pattern. Resolves every reference an
   Agent declares; if any is missing, marks the Agent `Degraded` with reason
   `ReferenceNotFound`. If everything exists but a referenced **Policy** forbids
   one of them, marks it `Degraded` with reason `PolicyViolation` — reported on a
@@ -80,11 +69,11 @@ itself to peers (`spec.expose`) — see *Coding agents* below.
   (so runtimes/Registry can detect drift) and marks the Agent `Ready`. Watches
   all referenceable kinds so a change to a dependency re-reconciles the Agents
   that use it.
-- **`TriggerReconciler`** — the same resource-owning pattern applied to *inbound*
+- **`TriggerReconciler`** — the same resource-owning pattern applied to _inbound_
   events: it materializes the adapter Deployment for a Trigger and injects the
   adapter contract, so bringing a new IM platform on board is an image plus a
   YAML, not a control-plane change.
-- **`MCPServerReconciler`** — the *resource-owning* pattern. Creates and owns a
+- **`MCPServerReconciler`** — the _resource-owning_ pattern. Creates and owns a
   `Deployment` + `Service` for each MCPServer via `CreateOrUpdate` +
   `SetControllerReference`, and reflects availability into status.
 
@@ -104,7 +93,7 @@ inheriting a `modelRef` from its AgentClass, and a Tool reaching an Agent
 through a ToolSet.
 
 Policy and ToolPolicy have no workload of their own, so their controllers only
-publish readiness — but the rules are *not* inert. `AgentReconciler` merges the
+publish readiness — but the rules are _not_ inert. `AgentReconciler` merges the
 policies each Agent references and refuses to run it if its declaration is
 forbidden; the Registry ships the same merged view to runtimes, which enforce the
 call-time half. See **[docs/usage.md](docs/usage.md)** §12.
@@ -148,7 +137,7 @@ curl -N localhost:9090/v1/agents/default/support-agent/watch
 
 ## Reference runtime: a real agent driven by Agent Plane
 
-`cmd/agent-runtime` is a minimal *real* agent that stands in for a full Agent
+`cmd/agent-runtime` is a minimal _real_ agent that stands in for a full Agent
 framework, built on the Go SDK
 ([`github.com/hkmdxlftjf/agent-plane-sdk-go`](https://github.com/hkmdxlftjf/agent-plane-sdk-go)).
 Point it at a deployed Agent and it:
@@ -195,11 +184,11 @@ materializes an `MCPServer`:
 
 ```yaml
 spec:
-  modelRef: {name: llm-model}
+  modelRef: { name: llm-model }
   runtime:
-    image: myorg/my-runtime:v1     # your runtime image (BYO); Agent Plane does not do inference
+    image: myorg/my-runtime:v1 # your runtime image (BYO); Agent Plane does not do inference
     replicas: 2
-    port: 8080                     # optional → also creates a Service
+    port: 8080 # optional → also creates a Service
 ```
 
 The Operator injects `AGENTPLANE_REGISTRY`, `AGENTPLANE_AGENT_NAMESPACE`, and
@@ -218,11 +207,11 @@ repository, one pod**:
 ```yaml
 kind: Agent
 spec:
-  agentClassRef: {name: backend-role}      # role: model + prompt + guardrails
+  agentClassRef: { name: backend-role } # role: model + prompt + guardrails
   workspace:
     repository: https://github.com/org/api
-    credentialRef: {name: git-token}
-  runtime: {image: your-coding-agent:latest, port: 8080}
+    credentialRef: { name: git-token }
+  runtime: { image: your-coding-agent:latest, port: 8080 }
 ```
 
 The Operator provisions a volume, clones into it, and pins the Deployment to a
@@ -237,7 +226,7 @@ with no peer Tool cannot reach any other.
 
 The runtime image is yours to supply: anything honoring
 [docs/runtime-protocol.md](docs/runtime-protocol.md) works. A coding agent
-(Claude Code, Codex, OpenCode) fits by *projection* — a thin shell writes the
+(Claude Code, Codex, OpenCode) fits by _projection_ — a thin shell writes the
 Registry config into the files the CLI already reads on startup, rather than the
 CLI being patched to understand this platform.
 
@@ -246,8 +235,8 @@ See **[docs/usage.md](docs/usage.md)** §14 and
 
 ## Inbound events (`Trigger`)
 
-Tools are how an Agent calls *out*. A **Trigger** is the other direction: an IM
-bot or webhook bringing messages *in*.
+Tools are how an Agent calls _out_. A **Trigger** is the other direction: an IM
+bot or webhook bringing messages _in_.
 
 Agent Plane implements no platform protocol. You supply an adapter image; the
 Operator runs it as an owned Deployment, mounts its credentials, and injects the
@@ -256,10 +245,10 @@ address of the Agent's runtime:
 ```yaml
 kind: Trigger
 spec:
-  agentRef: {name: support-agent}
-  image: myorg/lark-adapter:v1       # swap for DingTalk, Slack, …
-  credentialRef: {name: lark-app}
-  config: {events: ["im.message.receive_v1"]}
+  agentRef: { name: support-agent }
+  image: myorg/lark-adapter:v1 # swap for DingTalk, Slack, …
+  credentialRef: { name: lark-app }
+  config: { events: ["im.message.receive_v1"] }
 ```
 
 The adapter connects to the platform, POSTs `{sessionId, message}` to
@@ -278,17 +267,17 @@ in. See **[docs/adapter-protocol.md](docs/adapter-protocol.md)** and
 - **[docs/usage.md](docs/usage.md)** — full usage guide (deploy, declarative &
   programmatic usage, data plane, runtime, FAQ).
 - **[docs/runtime-protocol.md](docs/runtime-protocol.md)** — the runtime
-  configuration & change-notification protocol (v1): config flowing *out* to a
+  configuration & change-notification protocol (v1): config flowing _out_ to a
   runtime.
 - **[docs/adapter-protocol.md](docs/adapter-protocol.md)** — the inbound adapter
-  contract (v1): events flowing *in* from Lark/DingTalk/Slack/…. Implement it in
+  contract (v1): events flowing _in_ from Lark/DingTalk/Slack/…. Implement it in
   any language and your adapter runs under a `Trigger` unchanged.
 
 ## Roadmap (out of scope for this scaffold)
 
 - Registry gRPC transport and event-bus fan-out (HTTP + SSE are implemented)
 - Defaulting / conversion webhooks (validating webhooks are implemented)
-- Narrowing the manager's Secret/ConfigMap *cache* (enqueue is already
+- Narrowing the manager's Secret/ConfigMap _cache_ (enqueue is already
   reference-precise; the informer still watches them cluster-wide)
 - Multi-tenant scoping (Namespace / Cluster / Tenant)
 - Metrics dashboards and tracing wiring
