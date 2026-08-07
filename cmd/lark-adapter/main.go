@@ -104,17 +104,26 @@ type config struct {
 	AppID     string
 	AppSecret string
 
-	// ReplyInThread keeps an answer attached to the message that prompted it,
-	// which matters in a busy group chat. Comes from spec.config.
+	// ReplyInThread makes Lark open a thread on the message being answered.
+	// Off by default: in a one-on-one chat a thread per answer turns a
+	// conversation into a pile of collapsed branches, and the reply is already
+	// anchored to its message without one. Turn it on from spec.config for busy
+	// group chats, where keeping an answer next to its question is worth it.
 	ReplyInThread bool
-	Timeout       time.Duration
-	HealthAddr    string
+
+	// Card sends answers as an interactive card rather than plain text, so the
+	// Markdown a model naturally writes actually renders. On by default: a text
+	// message shows the asterisks and hyphens verbatim.
+	Card       bool
+	Timeout    time.Duration
+	HealthAddr string
 }
 
 // triggerConfig is the shape this adapter reads out of spec.config. The control
 // plane passes it through verbatim and interprets nothing.
 type triggerConfig struct {
 	ReplyInThread *bool `json:"replyInThread,omitempty"`
+	Card          *bool `json:"card,omitempty"`
 	TimeoutSecond *int  `json:"timeoutSeconds,omitempty"`
 }
 
@@ -124,7 +133,8 @@ func loadConfig() (*config, error) {
 		AgentName:      os.Getenv("AGENTPLANE_AGENT_NAME"),
 		AgentNamespace: os.Getenv("AGENTPLANE_AGENT_NAMESPACE"),
 		TriggerName:    os.Getenv("AGENTPLANE_TRIGGER_NAME"),
-		ReplyInThread:  true,
+		ReplyInThread:  false,
+		Card:           true,
 		// A coding or research agent thinks for a while; the default has to be
 		// generous or the adapter gives up mid-answer and the user sees silence.
 		Timeout:    5 * time.Minute,
@@ -157,6 +167,9 @@ func loadConfig() (*config, error) {
 		}
 		if tc.ReplyInThread != nil {
 			cfg.ReplyInThread = *tc.ReplyInThread
+		}
+		if tc.Card != nil {
+			cfg.Card = *tc.Card
 		}
 		if tc.TimeoutSecond != nil && *tc.TimeoutSecond > 0 {
 			cfg.Timeout = time.Duration(*tc.TimeoutSecond) * time.Second
@@ -216,17 +229,36 @@ func (a *adapter) onMessage(ctx context.Context, ev *larkim.P2MessageReceiveV1) 
 		return nil
 	}
 
+	// One line per message, both directions. Without it the adapter is silent on
+	// the success path, and "did the message even arrive?" — the first question
+	// asked when a bot seems unresponsive — has no answer anywhere: Lark shows
+	// the message as sent, and the pod looks healthy either way.
+	chat := deref(msg.ChatId)
+	fmt.Printf("← %s [%s] %s\n", chat, deref(msg.ChatType), truncate(text, 120))
+
 	// Rule 2: the platform's conversation id becomes the sessionId, so a chat
 	// gets multi-turn memory and two chats never share history. chat_id is stable
 	// per conversation and distinct per user in a p2p chat.
-	answer, err := a.ask(ctx, deref(msg.ChatId), text)
+	started := time.Now()
+	answer, err := a.ask(ctx, chat, text)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  ask agent: %v\n", err)
+		fmt.Fprintf(os.Stderr, "✖ %s: %v\n", chat, err)
 		a.reply(ctx, *msg.MessageId, "The agent could not answer: "+err.Error())
 		return nil
 	}
+	fmt.Printf("→ %s (%.1fs) %s\n", chat, time.Since(started).Seconds(), truncate(answer, 120))
 	a.reply(ctx, *msg.MessageId, answer)
 	return nil
+}
+
+// truncate keeps a log line to one line. Message bodies are arbitrary length and
+// an untruncated answer would bury every other line in the log.
+func truncate(s string, max int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len([]rune(s)) <= max {
+		return s
+	}
+	return string([]rune(s)[:max]) + "…"
 }
 
 // extractText pulls the user's words out of Lark's JSON message content. A
@@ -292,10 +324,35 @@ func (a *adapter) ask(ctx context.Context, sessionID, message string) (string, e
 	return out.Answer, nil
 }
 
+// buildCard renders an answer as a Lark interactive card.
+//
+// A plain text message renders nothing: an agent's Markdown — **bold**, bullet
+// lists, `code` — arrives as literal asterisks and hyphens, which is how the
+// first real conversation through this adapter looked. A card's lark_md field
+// renders most of that, so the answer reads the way the model wrote it.
+//
+// Kept deliberately minimal: one markdown block, no header, no buttons. A card
+// heavy with chrome around a one-word answer ("2") is worse than the text was.
+func buildCard(text string) ([]byte, error) {
+	card := map[string]any{
+		// wide_screen_mode lets a long answer use the full width instead of
+		// wrapping inside a narrow column.
+		"config": map[string]any{"wide_screen_mode": true},
+		"elements": []any{
+			map[string]any{
+				"tag":  "div",
+				"text": map[string]any{"tag": "lark_md", "content": text},
+			},
+		},
+	}
+	return json.Marshal(card)
+}
+
 // reply performs Rule 3. The Agent does not know it is talking to Lark; the
-// addressing is entirely this adapter's business.
+// addressing, and whether the answer becomes a card or plain text, are entirely
+// this adapter's business.
 func (a *adapter) reply(ctx context.Context, messageID, text string) {
-	content, err := json.Marshal(textContent{Text: text})
+	msgType, content, err := a.renderReply(text)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  marshal reply: %v\n", err)
 		return
@@ -303,8 +360,8 @@ func (a *adapter) reply(ctx context.Context, messageID, text string) {
 	req := larkim.NewReplyMessageReqBuilder().
 		MessageId(messageID).
 		Body(larkim.NewReplyMessageReqBodyBuilder().
-			MsgType(larkim.MsgTypeText).
-			Content(string(content)).
+			MsgType(msgType).
+			Content(content).
 			ReplyInThread(a.cfg.ReplyInThread).
 			Build()).
 		Build()
@@ -317,6 +374,26 @@ func (a *adapter) reply(ctx context.Context, messageID, text string) {
 	if !resp.Success() {
 		fmt.Fprintf(os.Stderr, "  reply to lark: code=%d msg=%s\n", resp.Code, resp.Msg)
 	}
+}
+
+// renderReply picks the message form and serializes it.
+//
+// Falling back to text on a card-marshal failure matters more than it looks: a
+// card that will not serialize would otherwise swallow the answer entirely, and
+// the user would see the bot ignore them rather than a plainly formatted reply.
+func (a *adapter) renderReply(text string) (msgType, content string, err error) {
+	if a.cfg.Card {
+		raw, cardErr := buildCard(text)
+		if cardErr == nil {
+			return larkim.MsgTypeInteractive, string(raw), nil
+		}
+		fmt.Fprintf(os.Stderr, "  card render failed, falling back to text: %v\n", cardErr)
+	}
+	raw, err := json.Marshal(textContent{Text: text})
+	if err != nil {
+		return "", "", err
+	}
+	return larkim.MsgTypeText, string(raw), nil
 }
 
 // healthz answers the readiness probe. It reports only that the process is
