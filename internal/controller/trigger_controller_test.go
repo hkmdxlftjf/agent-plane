@@ -150,6 +150,13 @@ var _ = Describe("Trigger Controller", func() {
 			Expect(dep.OwnerReferences[0].Kind).To(Equal("Trigger"))
 			Expect(*dep.OwnerReferences[0].Controller).To(BeTrue())
 
+			By("never overlapping two adapters")
+			// An adapter holds a long connection and platforms fan each event out to
+			// every open one. RollingUpdate would run the replacement alongside the
+			// outgoing pod, so every message during a rollout is answered twice —
+			// observed against real Lark before this was pinned.
+			Expect(dep.Spec.Strategy.Type).To(Equal(appsv1.RecreateDeploymentStrategyType))
+
 			trigger := &corev1alpha1.Trigger{}
 			Expect(k8sClient.Get(ctx, triggerKey, trigger)).To(Succeed())
 			// No adapter pod is available in envtest, so Pending is correct here:

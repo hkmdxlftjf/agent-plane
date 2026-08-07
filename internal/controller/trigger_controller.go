@@ -174,6 +174,13 @@ func (r *TriggerReconciler) reconcileAdapter(ctx context.Context, trigger *corev
 		dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 		dep.Spec.Template.Labels = labels
 
+		// An adapter holds a long connection, and platforms deliver each event to
+		// *every* open connection. RollingUpdate starts the replacement before the
+		// old pod exits, so during any update two connections are live and the user
+		// gets every message answered twice — the exact failure spec.replicas is
+		// capped at 1 to prevent, reintroduced on each rollout.
+		dep.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+
 		container := corev1.Container{
 			Name:      "adapter",
 			Image:     trigger.Spec.Image,
