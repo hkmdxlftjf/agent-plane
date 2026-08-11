@@ -70,6 +70,32 @@ Response:
 
 Check for `error` — it arrives with HTTP 200, not a 5xx.
 
+A runtime **may** additionally return `confirmation` alongside `answer`, when
+the model wants to pause a destructive or uncertain action and hand the
+decision to the user rather than guess (`cmd/coding-agent`'s
+`request_confirmation` tool is the reference producer of this field):
+
+```json
+{
+  "answer": "我准备把当前分支推送到 origin/main,请确认。",
+  "confirmation": {
+    "summary": "push the current branch to origin/main",
+    "options": [
+      {"label": "同意", "value": "approve"},
+      {"label": "拒绝", "value": "reject"}
+    ]
+  }
+}
+```
+
+This is additive, not a replacement for `answer` — an adapter that doesn't
+look at `confirmation` still shows the user something reasonable, because
+`answer` already describes the pending action in prose. An adapter that does
+render it (e.g. `cmd/lark-adapter` turns it into an interactive card with one
+button per option) must feed the user's choice back through the **same**
+`sessionId` as an ordinary `POST /api/chat` message — a card click is not a
+new wire call, just a different way of producing the next `message`.
+
 **Rule 2 — use the platform's conversation id as `sessionId`.**
 
 This is the one field with real consequences. The runtime keys conversation
