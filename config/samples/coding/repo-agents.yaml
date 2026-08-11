@@ -19,6 +19,9 @@
 # NOT runnable as-is: your-coding-agent:latest is a placeholder. Supply an image
 # that speaks the runtime protocol (docs/runtime-protocol.md); for a CLI-based
 # coding agent that means a shell that projects config into the files it reads.
+# cmd/coding-agent (build with Dockerfile.coding-agent) is one such image: a
+# model-driven edit loop with bash/read_file/write_file tools confined to the
+# checkout, ready to point runtime.image at.
 apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Credential
 metadata:

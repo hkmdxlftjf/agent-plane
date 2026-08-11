@@ -11,8 +11,9 @@
 #
 # Prerequisites: the shared Model/Credential samples, and a Secret holding the
 # platform app credentials. In the Lark console the app needs the
-# im:message:send_as_bot permission and an im.message.receive_v1 event
-# subscription set to "long connection" mode.
+# im:message:send_as_bot permission (and im:message.reactions:write, for the
+# emoji receipt acknowledgment the adapter posts before the agent answers) and
+# an im.message.receive_v1 event subscription set to "long connection" mode.
 #
 #   kubectl create secret generic lark-app \
 #     --from-literal=app-id=cli_xxx --from-literal=app-secret=yyy

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 )
 
 const (
@@ -160,8 +162,8 @@ func TestAskUsesTheConversationIDAsSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ask: %v", err)
 	}
-	if answer != "hello" {
-		t.Errorf("answer = %q, want %q", answer, "hello")
+	if answer.Answer != "hello" {
+		t.Errorf("answer = %q, want %q", answer.Answer, "hello")
 	}
 	if got.SessionID != testChatID {
 		t.Errorf("sessionId = %q, want the chat id", got.SessionID)
@@ -315,6 +317,41 @@ func TestRenderReplyAsCard(t *testing.T) {
 	}
 }
 
+func TestSanitizeMarkdownForLarkConvertsHeadings(t *testing.T) {
+	got := sanitizeMarkdownForLark("# Title\n\nbody\n## Sub\nmore")
+	want := "**Title**\n\nbody\n**Sub**\nmore"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestSanitizeMarkdownForLarkConvertsTables(t *testing.T) {
+	in := "before\n" +
+		"| Kind | Desc |\n" +
+		"|---|---|\n" +
+		"| Agent | core resource |\n" +
+		"| Model | endpoint |\n" +
+		"after"
+	got := sanitizeMarkdownForLark(in)
+	if strings.Contains(got, "|---|") {
+		t.Errorf("table separator leaked through unconverted: %s", got)
+	}
+	want := "before\n" +
+		"- **Kind**\uff1aAgent\uff0c**Desc**\uff1acore resource\n" +
+		"- **Kind**\uff1aModel\uff0c**Desc**\uff1aendpoint\n" +
+		"after"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestSanitizeMarkdownForLarkLeavesPlainTextAlone(t *testing.T) {
+	in := "**bold** and a `code` span, no headings or tables here."
+	if got := sanitizeMarkdownForLark(in); got != in {
+		t.Errorf("plain markdown should pass through unchanged, got %q", got)
+	}
+}
+
 // Cards are opt-out, because some deployments prefer plain text.
 func TestRenderReplyAsText(t *testing.T) {
 	a := &adapter{cfg: &config{Card: false}}
@@ -356,5 +393,107 @@ func TestCardDefaultsOn(t *testing.T) {
 	}
 	if cfg.Card {
 		t.Error("card:false from spec.config was ignored")
+	}
+}
+
+func TestRenderConfirmationAsCard(t *testing.T) {
+	a := &adapter{cfg: &config{Card: true}}
+	c := &confirmation{Summary: "push to main", Options: []confirmOption{
+		{Label: "同意", Value: "approve"},
+		{Label: "拒绝", Value: "reject"},
+	}}
+	msgType, content, err := a.renderConfirmation(testChatID, "about to push to main", c)
+	if err != nil {
+		t.Fatalf("renderConfirmation: %v", err)
+	}
+	if msgType != "interactive" {
+		t.Errorf("msgType = %q, want interactive", msgType)
+	}
+
+	var card struct {
+		Elements []struct {
+			Tag     string `json:"tag"`
+			Actions []struct {
+				Value map[string]any `json:"value"`
+			} `json:"actions"`
+		} `json:"elements"`
+	}
+	if err := json.Unmarshal([]byte(content), &card); err != nil {
+		t.Fatalf("card is not valid JSON: %v\n%s", err, content)
+	}
+	var actions []struct {
+		Value map[string]any `json:"value"`
+	}
+	for _, el := range card.Elements {
+		if el.Tag == "action" {
+			actions = el.Actions
+		}
+	}
+	if len(actions) != 2 {
+		t.Fatalf("actions = %d, want 2", len(actions))
+	}
+	if actions[0].Value["sessionId"] != testChatID || actions[0].Value["value"] != "approve" || actions[0].Value["label"] != "同意" {
+		t.Errorf("first button value = %+v, want sessionId/value/label for the approve option", actions[0].Value)
+	}
+}
+
+func TestRenderConfirmationAsText(t *testing.T) {
+	a := &adapter{cfg: &config{Card: false}}
+	c := &confirmation{Summary: "push to main", Options: []confirmOption{
+		{Label: "同意", Value: "approve"},
+		{Label: "拒绝", Value: "reject"},
+	}}
+	msgType, content, err := a.renderConfirmation(testChatID, "about to push to main", c)
+	if err != nil {
+		t.Fatalf("renderConfirmation: %v", err)
+	}
+	if msgType != "text" {
+		t.Errorf("msgType = %q, want text", msgType)
+	}
+	var tc textContent
+	if err := json.Unmarshal([]byte(content), &tc); err != nil {
+		t.Fatalf("content is not valid JSON: %v", err)
+	}
+	if !strings.Contains(tc.Text, "同意") || !strings.Contains(tc.Text, "拒绝") {
+		t.Errorf("text fallback = %q, want it to name both options", tc.Text)
+	}
+}
+
+func TestCardActionValueRoundtripsWhatBuildConfirmationCardSet(t *testing.T) {
+	raw, err := buildConfirmationCard(testChatID, "about to push", &confirmation{Options: []confirmOption{
+		{Label: "同意", Value: "approve"},
+	}})
+	if err != nil {
+		t.Fatalf("buildConfirmationCard: %v", err)
+	}
+
+	var card struct {
+		Elements []struct {
+			Tag     string `json:"tag"`
+			Actions []struct {
+				Value map[string]any `json:"value"`
+			} `json:"actions"`
+		} `json:"elements"`
+	}
+	if err := json.Unmarshal(raw, &card); err != nil {
+		t.Fatalf("card is not valid JSON: %v", err)
+	}
+	var value map[string]any
+	for _, el := range card.Elements {
+		if el.Tag == "action" {
+			value = el.Actions[0].Value
+		}
+	}
+
+	sessionID, optValue, label := cardActionValue(&callback.CallBackAction{Value: value})
+	if sessionID != testChatID || optValue != "approve" || label != "同意" {
+		t.Errorf("cardActionValue = (%q, %q, %q), want (%q, %q, %q)", sessionID, optValue, label, testChatID, "approve", "同意")
+	}
+}
+
+func TestCardActionValueHandlesNilAction(t *testing.T) {
+	sessionID, value, label := cardActionValue(nil)
+	if sessionID != "" || value != "" || label != "" {
+		t.Errorf("cardActionValue(nil) = (%q, %q, %q), want all empty", sessionID, value, label)
 	}
 }

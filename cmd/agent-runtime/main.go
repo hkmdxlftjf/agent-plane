@@ -211,7 +211,7 @@ func buildSystemPrompt(cfg *sdk.AgentConfig, logf func(string, ...any)) string {
 			desc = sk.Name
 		}
 		catalog = append(catalog, fmt.Sprintf("- %s: %s", sk.Name, desc))
-		logf("skill (catalog): %s (%d chars, lazy)", sk.Name, len(sk.Content))
+		logf("skill (catalog): %s (~%d tokens, lazy)", sk.Name, estimateTokens(sk.Content))
 	}
 	if len(catalog) > 0 {
 		system += "\n\n# Skills available\n" +
@@ -221,6 +221,23 @@ func buildSystemPrompt(cfg *sdk.AgentConfig, logf func(string, ...any)) string {
 			strings.Join(catalog, "\n")
 	}
 	return system
+}
+
+// estimateTokens is a dependency-free approximation of token count (roughly 4
+// ASCII characters per token, 1 token per non-ASCII rune for CJK and other wide
+// scripts) used to size the skill catalog against the model's actual context
+// budget rather than raw character counts. It is not a substitute for the
+// provider's real tokenizer, which the SDK does not expose.
+func estimateTokens(s string) int {
+	ascii, wide := 0, 0
+	for _, r := range s {
+		if r < 128 {
+			ascii++
+		} else {
+			wide++
+		}
+	}
+	return ascii/4 + wide
 }
 
 // loadSkillTool builds the in-process load_skill tool. It serves a named Skill's
