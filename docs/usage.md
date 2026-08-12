@@ -570,43 +570,69 @@ Worked example: `config/samples/coding/repo-agents.yaml`.
 
 ### Adapting a coding agent
 
-Coding agents (Claude Code, Codex, OpenCode) are CLIs, not HTTP servers, and they
-accept no injected system prompt or tool list. The way to run one here is
-**projection**: a thin shell writes the Registry config into the files the CLI
-already reads on startup, and execs it per turn. Nothing in the CLI is patched.
+Coding agents are not HTTP servers and accept no injected system prompt or tool
+list, so the way to run one here is **projection**: write the Registry's config
+into whatever the agent already reads, without patching the agent itself.
 
-A shell doing this has two jobs:
+Where that projection *runs* depends on the agent. Two shapes:
 
-- **Projection.** Write the Agent's `promptRef`, Skills, and mcp Tools (including
-  peer Agents) into whatever the CLI reads — an instructions file and an MCP
-  config, typically — on startup and again on every hot reload.
-- **A turn.** Serve `POST /api/chat` (§runtime protocol), exec the CLI, and map
-  the caller's `sessionId` to the CLI's own session so follow-ups resume rather
-  than start cold. Serialize turns: one working tree, one writer.
+**A plugin, in-process** — the shape `Dockerfile.coding-agent` uses, with
+opencode. opencode loads plugins from `.opencode/plugin` and gives them a
+`config` hook that fires while the plugin loads, whose mutations reach the live
+server. So a plugin can fetch the Registry, inject the model provider,
+credentials, MCP servers and permissions, and be finished before the first turn.
+No sidecar, no `/api/chat` translation, and the inbound platform connection can
+live in the same process (§Talking to it from an IM client).
 
-Two limits are worth knowing before choosing this shape:
+**A shell, out-of-process** — for a CLI with no plugin system. The shell writes
+the config files, serves `POST /api/chat` (§runtime protocol), execs the CLI per
+turn, and maps the caller's `sessionId` to the CLI's own session so follow-ups
+resume rather than start cold. Serialize turns: one working tree, one writer.
 
-- **Skills usually cannot be disclosed on demand.** A CLI with no `load_skill`
-  tool cannot fetch a Skill body mid-turn, so the catalog approach §11 describes
-  does not apply — every mounted Skill rides along in each turn's context. Prefer
-  a few focused Skills over many broad ones.
-- **ToolPolicy governs declared Tools, not the CLI's built-ins.** `Bash`,
-  `Write`, and friends are not Tool CRs, so a ToolPolicy says nothing about them,
-  and `maxCallsPerSession` typically has no CLI equivalent. A shell should **log
-  each unenforceable rule at startup** rather than letting a policy look applied
-  when half of it is inert.
-- **Permission prompts have no one to answer them.** A CLI that asks before
-  writing will find no human at a terminal; depending on the tool it either
-  denies silently or stalls. Check how yours behaves headlessly *before* building
-  on it — a runtime that reports success while every write was refused is worse
-  than one that fails outright.
+Whichever shape, three things are worth knowing before you build on it:
+
+- **A writable, durable `HOME` is required, and where it points matters.** A
+  workspace pod's root filesystem is read-only, and coding agents keep real state
+  (session history, caches, resolved plugin dependencies). The Operator points
+  `HOME` at a directory on the working tree's volume, so that state survives a
+  restart — a conversation resumes after the pod is rescheduled instead of
+  starting over. `/tmp` is writable too, but it is an emptyDir: every restart
+  would forget everything.
+- **Anything the agent fetches on first run must be baked into the image.** A
+  cluster with no egress to npm or a model catalog will *hang* during startup
+  rather than fail, which is much harder to diagnose than an error.
+  `Dockerfile.coding-agent` pre-installs the plugin's dependencies and the model
+  catalog for exactly this reason.
+- **ToolPolicy governs declared Tools, not the agent's built-ins.** `bash`,
+  `edit`, and friends are not Tool CRs, so a ToolPolicy says nothing about them,
+  and `maxCallsPerSession` has no equivalent. Neither does a Skill's
+  `allowedTools`, nor a `type: http` Tool. **Log each unenforceable rule at
+  startup** rather than letting a policy look applied when half of it is inert.
+
+**Permission prompts do have someone to answer them now.** This used to be the
+warning here: a CLI that asks before writing finds no human at a terminal and
+either denies silently or stalls. With the plugin shape the asker and the
+answerer are wired together — opencode blocks the turn and emits a permission
+request, the plugin renders it into the chat, and the user's answer releases the
+turn. The model's work up to the question is resumed, not redone. Skills are
+similar: opencode reads them from a skill directory on demand, so the
+progressive-disclosure property §11 describes survives projection.
 
 ### Talking to it from an IM client
 
-Combine this with a `Trigger` (§13) and a repository's agent becomes reachable
-from Lark or DingTalk. One caveat: the adapter contract expects the runtime to
-serve `POST /api/chat`, and a coding CLI is not an HTTP server — the shell above
-wraps it. That wrapper is the image's business; the contract does not change.
+For a plain Agent, a `Trigger` (§13) brings messages in and the adapter contract
+holds unchanged.
+
+For a **workspace** Agent running the plugin shape, there is no Trigger and no
+adapter pod: the plugin holds the platform connection itself, inside the pod that
+runs the model. That is what makes the approval loop work end to end — the thing
+that blocks the turn and the thing that shows the user a button are the same
+process.
+
+The tradeoff is explicit. One moving part instead of two, and a real approval
+loop; in exchange, the platform is no longer swappable by changing a Trigger
+image. Adding DingTalk or Slack means another plugin rather than another Trigger.
+Worked example: `config/samples/coding/lark-coding-agent.yaml`.
 
 ---
 

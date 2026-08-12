@@ -1,0 +1,77 @@
+# Feishu as a Tool, not a credential.
+#
+# This is the answer to a real incident. Asked to "write this up as a Feishu
+# doc", the coding agent found the app credential in its own environment, read
+# it, and exchanged it for a tenant access token — putting the secret into its
+# context and into the conversation history. It was not misbehaving: the
+# capability it needed was only reachable through a secret it could see.
+#
+# Running the official MCP server as its own Deployment removes the secret from
+# the agent's reach entirely. The credential is a Secret mounted into *this*
+# pod's environment; the agent gets a tool endpoint. It cannot read what it does
+# not have, which is a stronger guarantee than a prompt telling it not to.
+#
+# Verified against @larksuiteoapi/lark-mcp 0.5.1 in streamable mode: it serves
+# MCP JSON-RPC at POST /mcp, answers `initialize` and `tools/list` without a
+# session header, and exposes 19 tools including docx_builtin_import (create a
+# document from Markdown), docx_builtin_search, docx_v1_document_rawContent and
+# im_v1_message_create.
+#
+#   kubectl create secret generic lark-app \
+#     --from-literal=app-id=cli_xxx --from-literal=app-secret=yyy
+#   kubectl apply -f config/samples/coding/lark-mcp.yaml -n default
+#   kubectl get mcpserver lark-mcp -o jsonpath='{.status.endpoint}'
+#
+# Then reference the Tool from an Agent (see lark-coding-agent.yaml):
+#
+#   spec:
+#     toolRefs:
+#       - name: lark-docs
+#
+# NOTE: adding an MCP server is one of the two changes that need a pod restart —
+# it is wired into opencode's startup configuration, unlike a prompt or a Skill,
+# which apply on the next message. The runtime logs which it was and says so:
+#   changed mcp servers needs a restart to take effect: kubectl rollout restart
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: lark-mcp
+spec:
+  # Self-hosted rather than externalEndpoint: an external URL with the key in a
+  # query parameter is readable by anyone who can read the resource, which is the
+  # problem this file exists to avoid. Here the key stays in a Secret and never
+  # leaves this pod.
+  #
+  # Built from Dockerfile.lark-mcp. The CRD has no command field — an MCP server
+  # image is expected to start its server as its entrypoint — so the wrapper and
+  # the pinned version live there.
+  image: agent-plane-lark-mcp:local
+  transport: http
+  port: 3000
+  env:
+    - name: LARK_APP_ID
+      valueFrom:
+        secretKeyRef:
+          name: lark-app
+          key: app-id
+    - name: LARK_APP_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: lark-app
+          key: app-secret
+---
+# The tool the Agent actually declares. Description over precision: this string
+# is what the model matches against when deciding whether Feishu is relevant, so
+# it names the artefacts ("document", "spreadsheet") rather than the mechanism.
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Tool
+metadata:
+  name: lark-docs
+spec:
+  type: mcp
+  description: >-
+    Create, read and search Feishu (Lark) documents, and send Feishu messages.
+    Use whenever a task asks for a Feishu doc, wiki page, spreadsheet or chat
+    message. Import Markdown with docx_builtin_import.
+  mcpServerRef:
+    name: lark-mcp

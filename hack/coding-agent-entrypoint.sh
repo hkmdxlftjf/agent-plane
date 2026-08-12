@@ -1,0 +1,153 @@
+#!/bin/sh
+# Entrypoint for the opencode-based coding Agent.
+#
+# Three jobs, in order, then exec opencode:
+#
+#   1. Seed HOME. The Operator points HOME at a directory on the workspace
+#      volume so session history survives a restart, but that volume is empty on
+#      a fresh PersistentVolumeClaim and the root filesystem is read-only. The
+#      image bakes the plugin's resolved dependencies and the models catalog;
+#      this copies them across on first start. Without it, opencode tries to npm
+#      install the plugin's deps and fetch the catalog at bootstrap — which, in a
+#      cluster with no egress to npm or models.dev, hangs instead of failing.
+#
+#   2. Project the plugin into the workspace. opencode discovers plugins from
+#      .opencode/plugin in the working directory; a loader file there imports the
+#      package installed in step 1. (Declaring the package name in opencode.json's
+#      "plugin" array instead is NOT equivalent — it wedges session creation.)
+#
+#   3. Hand over to opencode with exec, so it is PID 1 and receives SIGTERM
+#      directly. A shell parent would swallow the signal and turn every rollout
+#      into a 30-second kill delay.
+#
+# Every step is idempotent: a restart re-runs all of it against an already-seeded
+# volume and changes nothing.
+set -eu
+
+WORKSPACE="${AGENTPLANE_WORKSPACE:-/workspace}"
+HOME="${HOME:-$WORKSPACE/.agent-home}"
+export HOME
+SEED="${AGENTPLANE_HOME_SEED:-/opt/agent-plane/home-seed}"
+
+log() { echo "[entrypoint] $*"; }
+
+# 1. Seed HOME from the image, without overwriting anything already there.
+mkdir -p "$HOME"
+if [ -d "$SEED" ]; then
+  # -n so a restart never clobbers state the agent accumulated; the seed is a
+  # floor, not the source of truth.
+  cp -Rn "$SEED/." "$HOME/" 2>/dev/null || true
+fi
+for dir in .config/opencode cache/opencode share state; do
+  mkdir -p "$HOME/$dir"
+done
+
+# The plugin and its dependency declaration are image-owned, so both are copied
+# over unconditionally rather than left to the -n above.
+#
+# This is the difference between an image tag meaning something and not. The
+# volume outlives the pod, so a `cp -n` would leave a *new* image running the
+# *old* plugin: the deployment rolls, the logs look healthy, and the change you
+# shipped is simply absent. Conversation state belongs on the volume; code does
+# not.
+#
+# Replaced wholesale, not merged: a leftover module from a previous version is
+# indistinguishable from a current one at import time.
+if [ -d "$SEED/.config/opencode/node_modules" ]; then
+  rm -rf "$HOME/.config/opencode/node_modules"
+  cp -R "$SEED/.config/opencode/node_modules" "$HOME/.config/opencode/node_modules"
+fi
+if [ -f "$SEED/.config/opencode/package.json" ]; then
+  cp "$SEED/.config/opencode/package.json" "$HOME/.config/opencode/package.json"
+fi
+if [ ! -d "$HOME/.config/opencode/node_modules" ]; then
+  log "warning: plugin dependencies are absent from $HOME/.config/opencode;"
+  log "         opencode will try to install them, which needs egress to npm"
+fi
+
+# Settle the dependency tree before opencode does.
+#
+# opencode reconciles package.json against node_modules on startup, and it does
+# that *inside* plugin loading — so if the reconcile has any work to do, bootstrap
+# blocks until it finishes, and a first boot on an empty volume simply hangs with
+# nothing in the log to say why. Running it here means the reconcile opencode
+# performs is a no-op.
+#
+# --offline first: everything needed is already in the image, and an offline
+# install cannot stall on an unreachable registry. The online retry covers a
+# volume carrying a tree from an older image.
+if [ -d "$HOME/.config/opencode" ]; then
+  ( cd "$HOME/.config/opencode" \
+    && { npm install --omit=dev --no-audit --no-fund --offline >/dev/null 2>&1 \
+         || npm install --omit=dev --no-audit --no-fund >/dev/null 2>&1; } ) \
+    || log "note: could not settle plugin dependencies; opencode will retry on load"
+fi
+
+# 2. Project the plugin, and make it resolvable.
+#
+# Node resolves a bare specifier by walking node_modules up from the *importing*
+# file, so a loader in $WORKSPACE/.opencode/plugin cannot see a package installed
+# under $HOME/.config/opencode/node_modules — the two paths share no ancestor.
+# Linking the seeded tree into the workspace root is what closes that gap.
+#
+# A symlink, not a copy: the packages are read-only and can be large, and a copy
+# per restart would grow the volume for nothing.
+mkdir -p "$WORKSPACE/.opencode/plugin"
+seeded_modules="$HOME/.config/opencode/node_modules"
+if [ -d "$seeded_modules" ] && [ ! -e "$WORKSPACE/node_modules" ]; then
+  ln -s "$seeded_modules" "$WORKSPACE/node_modules"
+fi
+if [ ! -e "$WORKSPACE/node_modules/@hkmdxlftjf/agent-plane-opencode-plugin" ]; then
+  log "warning: the plugin is not resolvable from $WORKSPACE;"
+  log "         opencode will start without Agent Plane configuration"
+fi
+cat > "$WORKSPACE/.opencode/plugin/agent-plane.js" <<'LOADER'
+// Generated by the image entrypoint. The plugin is installed under
+// $HOME/.config/opencode/node_modules and linked in at the workspace root, which
+// is what lets this bare import resolve.
+export { AgentPlane as default } from "@hkmdxlftjf/agent-plane-opencode-plugin"
+LOADER
+
+# Keep the directories we project out of the repository the agent works on.
+#
+# The `/**` suffix is not decoration. A repository whose own .gitignore
+# re-includes directories — the `/*` then `!/*/` idiom is common, and this
+# project uses it — un-ignores `/.agent-home/` no matter what .git/info/exclude
+# says, because a negation in .gitignore wins over a plain directory pattern in
+# the exclude file. Matching the *contents* instead is what survives that.
+#
+# The symptom when this is wrong is not a warning: the agent's own logs and
+# state show up as untracked files in the tree it is editing, every turn diffs a
+# file that grows as the agent writes it, and turns get slower and slower.
+#
+# Non-fatal: .git is written by the clone step as root, so this can be
+# unwritable. A tidier `git status` is not worth refusing to start over — the
+# clone step writes the same patterns, and this is the fallback for the ones it
+# does not know about.
+if [ -d "$WORKSPACE/.git" ] && [ -w "$WORKSPACE/.git/info" ]; then
+  for pattern in "/.opencode/**" "/.agent-home/**" "/node_modules/**"; do
+    grep -qxF "$pattern" "$WORKSPACE/.git/info/exclude" 2>/dev/null \
+      || echo "$pattern" >> "$WORKSPACE/.git/info/exclude" 2>/dev/null || true
+  done
+elif [ -d "$WORKSPACE/.git" ]; then
+  log "note: .git/info is not writable; relying on the clone step's exclude patterns"
+fi
+
+# 3. Serve, from inside the working tree.
+#
+# The `cd` is load-bearing, not tidiness: opencode takes its project directory
+# from the current directory, and it is the project directory that decides where
+# it looks for .opencode/plugin and opencode.json. Started from elsewhere (a
+# container's default cwd is /), it resolves the project as / — the plugin is
+# never loaded, no configuration is projected, and the only symptom is a session
+# that works but knows nothing about this Agent. Which is a much harder thing to
+# notice than a crash.
+#
+# --hostname 0.0.0.0 so the Service the Operator creates can reach it when
+# spec.runtime.port is set; the default binds to loopback only.
+cd "$WORKSPACE"
+log "starting opencode in $WORKSPACE (home=$HOME)"
+exec opencode serve \
+  --hostname "${OPENCODE_HOSTNAME:-0.0.0.0}" \
+  --port "${OPENCODE_PORT:-4096}" \
+  "$@"

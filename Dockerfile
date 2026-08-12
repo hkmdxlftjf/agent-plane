@@ -2,6 +2,11 @@
 FROM golang:1.26 AS builder
 ARG TARGETOS
 ARG TARGETARCH
+# GOPROXY is build-time only, for networks where the default module proxy is slow
+# (e.g. --build-arg GOPROXY=https://goproxy.cn,direct). Unset uses Go's default,
+# so a release build depends on no particular mirror.
+ARG GOPROXY
+ENV GOPROXY=${GOPROXY}
 
 WORKDIR /workspace
 # Copy the Go Modules manifests

@@ -111,7 +111,7 @@ var _ = Describe("Agent workspace", func() {
 
 			By("mounting the same tree into the runtime container")
 			runtime := dep.Spec.Template.Spec.Containers[0]
-			Expect(runtime.VolumeMounts).To(HaveLen(1))
+			Expect(runtime.VolumeMounts).To(HaveLen(2))
 			Expect(runtime.VolumeMounts[0].Name).To(Equal(workspaceVolumeName))
 			Expect(envOf(runtime)["AGENTPLANE_WORKSPACE"]).To(Equal("/workspace"))
 			Expect(dep.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName).To(Equal(pvcKey.Name))
@@ -131,6 +131,14 @@ var _ = Describe("Agent workspace", func() {
 			// even schedule — so Recreate at one replica is the only correct pairing.
 			Expect(*dep.Spec.Replicas).To(Equal(int32(1)))
 			Expect(dep.Spec.Strategy.Type).To(Equal(appsv1.RecreateDeploymentStrategyType))
+
+			By("sandboxing the container that runs model-directed shell commands")
+			sc := runtime.SecurityContext
+			Expect(sc).NotTo(BeNil())
+			Expect(*sc.RunAsNonRoot).To(BeTrue())
+			Expect(*sc.ReadOnlyRootFilesystem).To(BeTrue())
+			Expect(*sc.AllowPrivilegeEscalation).To(BeFalse())
+			Expect(sc.Capabilities.Drop).To(ConsistOf(corev1.Capability("ALL")))
 
 			agent := &corev1alpha1.Agent{}
 			Expect(k8sClient.Get(ctx, agentKey, agent)).To(Succeed())
@@ -224,6 +232,33 @@ var _ = Describe("Agent workspace", func() {
 			}
 			Expect(secretVol).To(BeTrue())
 		})
+
+		// A coding agent that can only read its repository can never deliver a
+		// change: the runtime container needs the same push credential, mounted
+		// the same way, or it can edit files but never commit them back.
+		It("also mounts the credential into the runtime container for push", func() {
+			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, depKey, dep)).To(Succeed())
+			runtime := dep.Spec.Template.Spec.Containers[0]
+
+			var mounted bool
+			for _, m := range runtime.VolumeMounts {
+				if m.MountPath == gitCredentialMountPath {
+					mounted = true
+					Expect(m.ReadOnly).To(BeTrue())
+				}
+			}
+			Expect(mounted).To(BeTrue(), "push credential is not mounted into the runtime container")
+
+			Expect(envOf(runtime)["AGENTPLANE_GIT_CREDENTIAL_FILE"]).To(HavePrefix(gitCredentialMountPath))
+			Expect(envOf(runtime)["GIT_CONFIG_COUNT"]).To(Equal("2"))
+			Expect(envOf(runtime)["GIT_CONFIG_KEY_1"]).To(Equal("credential.helper"))
+			Expect(envOf(runtime)["GIT_CONFIG_VALUE_1"]).To(Equal(gitCredentialHelper))
+		})
 	})
 
 	// A missing Credential must fail the reconcile rather than scheduling a pod
@@ -250,6 +285,142 @@ var _ = Describe("Agent workspace", func() {
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(testMissingName))
+		})
+	})
+
+	// The runtime container's root filesystem is read-only, so a runtime that
+	// keeps state (conversation history, resolved plugin dependencies) needs a
+	// writable HOME — and one that survives a restart, or every restart starts
+	// the conversation over. It goes on the workspace volume for that reason;
+	// /tmp is writable but is an emptyDir.
+	Context("When a workspace runtime needs a writable home", func() {
+		const (
+			agentName = "test-ws-home-agent"
+			modelName = "test-ws-home-model"
+			credName  = "test-ws-home-cred"
+		)
+		agentKey := types.NamespacedName{Name: agentName, Namespace: nsDefault}
+		depKey := types.NamespacedName{Name: agentName + "-runtime", Namespace: nsDefault}
+
+		BeforeEach(func() {
+			cred := &corev1alpha1.Credential{
+				ObjectMeta: metav1.ObjectMeta{Name: credName, Namespace: nsDefault},
+				Spec: corev1alpha1.CredentialSpec{
+					SecretRef: corev1alpha1.SecretKeyReference{Name: "model-secret", Key: "api-key"},
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, cred))).To(Succeed())
+
+			model := &corev1alpha1.Model{
+				ObjectMeta: metav1.ObjectMeta{Name: modelName, Namespace: nsDefault},
+				Spec: corev1alpha1.ModelSpec{
+					Provider:      testProvider,
+					ModelName:     testModelName,
+					CredentialRef: &corev1alpha1.LocalReference{Name: credName},
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, model))).To(Succeed())
+
+			agent := repoAgent(agentName, "https://github.com/org/home", func(a *corev1alpha1.Agent) {
+				a.Spec.ModelRef = &corev1alpha1.LocalReference{Name: modelName}
+			})
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
+		})
+
+		AfterEach(func() {
+			deleteIfExists(ctx, agentKey, &corev1alpha1.Agent{})
+			deleteIfExists(ctx, depKey, &appsv1.Deployment{})
+			deleteIfExists(ctx, types.NamespacedName{Name: agentName + "-workspace", Namespace: nsDefault}, &corev1.PersistentVolumeClaim{})
+			deleteIfExists(ctx, types.NamespacedName{Name: modelName, Namespace: nsDefault}, &corev1alpha1.Model{})
+			deleteIfExists(ctx, types.NamespacedName{Name: credName, Namespace: nsDefault}, &corev1alpha1.Credential{})
+		})
+
+		It("points HOME at the workspace volume and mounts the model credential", func() {
+			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, depKey, dep)).To(Succeed())
+			runtime := dep.Spec.Template.Spec.Containers[0]
+			env := envOf(runtime)
+
+			By("placing HOME on the persistent volume, not in /tmp")
+			home := "/workspace/" + agentHomeDirName
+			Expect(env["HOME"]).To(Equal(home))
+			Expect(env["AGENTPLANE_AGENT_HOME"]).To(Equal(home))
+			// XDG_* are set explicitly because only some of them derive from HOME.
+			Expect(env["XDG_CONFIG_HOME"]).To(HavePrefix(home))
+			Expect(env["XDG_DATA_HOME"]).To(HavePrefix(home))
+			Expect(env["XDG_STATE_HOME"]).To(HavePrefix(home))
+			Expect(env["XDG_CACHE_HOME"]).To(HavePrefix(home))
+
+			By("keeping that directory out of the repository")
+			clone := dep.Spec.Template.Spec.InitContainers[0]
+			Expect(clone.Command).To(ContainElement(ContainSubstring("info/exclude")))
+			// The /** suffix matters: a repository whose own .gitignore re-includes
+			// directories ("/*" then "!/*/") overrides a plain directory pattern
+			// here, and the agent's state reappears as untracked files.
+			Expect(clone.Command).To(ContainElement(ContainSubstring("/" + agentHomeDirName + "/**")))
+			// Created as root, written by a non-root uid sharing only the fsGroup:
+			// without the group-write bit the runtime cannot start on a fresh volume.
+			Expect(clone.Command).To(ContainElement(ContainSubstring("chmod 2775")))
+
+			By("mounting the model credential read-only, so no Kubernetes client is needed")
+			var mounted bool
+			for _, m := range runtime.VolumeMounts {
+				if m.MountPath == modelCredentialMountPath {
+					mounted = true
+					Expect(m.ReadOnly).To(BeTrue())
+				}
+			}
+			Expect(mounted).To(BeTrue(), "model credential is not mounted into the runtime container")
+
+			var fromSecret string
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				if v.Name == "model-credential" && v.Secret != nil {
+					fromSecret = v.Secret.SecretName
+				}
+			}
+			Expect(fromSecret).To(Equal("model-secret"))
+
+			By("still refusing to write to the root filesystem")
+			Expect(runtime.SecurityContext.ReadOnlyRootFilesystem).To(HaveValue(BeTrue()))
+			Expect(runtime.SecurityContext.RunAsNonRoot).To(HaveValue(BeTrue()))
+		})
+	})
+
+	// An Agent with no model credential must still get a Deployment: the
+	// credential mount is additive, and a runtime that starts and logs the gap
+	// converges once the Secret appears.
+	Context("When a workspace Agent has no model credential", func() {
+		const agentName = "test-ws-nocred-agent"
+		agentKey := types.NamespacedName{Name: agentName, Namespace: nsDefault}
+		depKey := types.NamespacedName{Name: agentName + "-runtime", Namespace: nsDefault}
+
+		BeforeEach(func() {
+			agent := repoAgent(agentName, "https://github.com/org/nocred", nil)
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
+		})
+
+		AfterEach(func() {
+			deleteIfExists(ctx, agentKey, &corev1alpha1.Agent{})
+			deleteIfExists(ctx, depKey, &appsv1.Deployment{})
+			deleteIfExists(ctx, types.NamespacedName{Name: agentName + "-workspace", Namespace: nsDefault}, &corev1.PersistentVolumeClaim{})
+		})
+
+		It("still creates the Deployment, with a writable home and no credential volume", func() {
+			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, depKey, dep)).To(Succeed())
+			runtime := dep.Spec.Template.Spec.Containers[0]
+			Expect(envOf(runtime)["HOME"]).To(Equal("/workspace/" + agentHomeDirName))
+			for _, m := range runtime.VolumeMounts {
+				Expect(m.MountPath).NotTo(Equal(modelCredentialMountPath))
+			}
 		})
 	})
 

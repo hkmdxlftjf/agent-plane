@@ -5,9 +5,15 @@
 # owns the Lark/DingTalk/Slack connection and the reply call. Adding a platform
 # means a new adapter image and another Trigger — no control-plane change.
 #
-# The Lark adapter is built from this repo (Dockerfile.lark-adapter) and is the
-# reference implementation of the contract. It holds a WebSocket out to Lark, so
-# no ingress, TLS certificate, or public webhook URL is needed — only egress.
+# The adapter image is yours to supply — this repository no longer ships a Go
+# one (the Lark integration moved into the coding-agent runtime as an opencode
+# plugin; see docs/adapter-protocol.md §9 for why, and §5 for the decisions any
+# adapter faces). An adapter that holds a WebSocket out to Lark needs no ingress,
+# TLS certificate, or public webhook URL — only egress.
+#
+# This Trigger shape is still the right one for a plain Agent that answers
+# questions. For a workspace Agent that writes to a repository and needs
+# enforceable approvals, see config/samples/coding/lark-coding-agent.yaml.
 #
 # Prerequisites: the shared Model/Credential samples, and a Secret holding the
 # platform app credentials. In the Lark console the app needs the
