@@ -1,0 +1,185 @@
+# Build image for a repository-bound coding Agent: opencode, plus the Agent
+# Plane plugin that configures it and brings IM messages in.
+#
+# There is no Agent Plane runtime process here any more. opencode runs the agent
+# loop and owns the tools, the session history and the context; the plugin —
+# loaded in-process from .opencode/plugin — projects the Registry's config into
+# opencode's own configuration and holds the Lark connection. Nothing in this
+# image serves /api/chat, because nothing needs to: the platform connection
+# terminates inside the same process that runs the model.
+#
+# Two things this image must do at BUILD time. With either one missing the
+# server never becomes usable in a cluster without egress to npm or models.dev,
+# and it fails by *hanging* during bootstrap rather than by erroring:
+#
+#   1. Pre-install the plugin and its dependencies into $HOME/.config/opencode.
+#      That is where opencode resolves plugin dependencies on first run, with
+#      npm; a restricted network turns that install into a hang.
+#   2. Pre-seed the models.dev catalog into the cache, for the same reason.
+#
+# The Operator points HOME at the workspace volume (agentHomeDirName in
+# internal/controller/agent_controller.go) so session history survives a
+# restart. That volume starts empty, and the root filesystem is read-only, so
+# the entrypoint seeds it from the baked copy on first start.
+#
+# opencode is pinned deliberately. Its API is still moving — as of 1.18.5 the
+# session-wait endpoint answers 503 "not available yet" — so :latest would let
+# an upstream release change behaviour under a running deployment.
+FROM node:22-bookworm-slim AS plugin
+ARG PLUGIN_VERSION=0.1.0
+# PLUGIN_TARBALL installs the plugin from a local `npm pack` archive instead of
+# the registry — for testing a change before publishing it. Leave it unset for a
+# real build: a released version is what makes the image reproducible, and a
+# path-based install that works on a laptop is exactly the shape that passes
+# locally and fails in CI.
+#
+#   npm pack --pack-destination .   # in the plugin repo
+#   docker build -f Dockerfile.coding-agent \
+#     --build-arg PLUGIN_TARBALL=hkmdxlftjf-agent-plane-opencode-plugin-0.1.0.tgz .
+ARG PLUGIN_TARBALL=
+# NPM_REGISTRY swaps the npm registry — build-time only, same rationale as
+# APT_MIRROR below (e.g. --build-arg NPM_REGISTRY=https://registry.npmmirror.com).
+ARG NPM_REGISTRY=
+WORKDIR /seed
+# Installed the way opencode expects to find it: a package.json in the config
+# directory whose dependencies are resolved into a sibling node_modules.
+#
+# The dependency specifier is load-bearing. opencode reconciles this file against
+# node_modules on startup with a background npm install, and whatever it cannot
+# resolve locally it goes to the registry for — which blocks plugin loading
+# entirely: the server listens, bootstrap never finishes, every request hangs,
+# and nothing in the log says why.
+#
+# So an unpublished build must be referenced by a `file:` path that still exists
+# at runtime, and the tarball is kept in the image for exactly that. A plain
+# version number would send npm to the registry, find no such version, and
+# *remove* the installed plugin — verified: `npm install` reports "removed 1
+# package".
+ARG PLUGIN_TARBALL_DIR=/opt/agent-plane/plugin-src
+COPY ${PLUGIN_TARBALL:-package.json} ${PLUGIN_TARBALL_DIR}/
+RUN set -eux; \
+    if [ -n "${NPM_REGISTRY}" ]; then npm config set registry "${NPM_REGISTRY}"; fi; \
+    if [ -n "${PLUGIN_TARBALL}" ]; then \
+      printf '{"dependencies":{"@hkmdxlftjf/agent-plane-opencode-plugin":"file:%s/%s"}}\n' \
+        "${PLUGIN_TARBALL_DIR}" "${PLUGIN_TARBALL}" > package.json; \
+      npm install --omit=dev --no-audit --no-fund; \
+    else \
+      printf '{"dependencies":{"@hkmdxlftjf/agent-plane-opencode-plugin":"%s"}}\n' "${PLUGIN_VERSION}" > package.json; \
+      npm install --omit=dev --no-audit --no-fund; \
+    fi; \
+    test -d node_modules/@hkmdxlftjf/agent-plane-opencode-plugin
+
+FROM node:22-bookworm-slim
+ARG OPENCODE_VERSION=1.18.5
+ARG TARGETARCH
+# Redeclared: an ARG from an earlier stage is not in scope here.
+ARG NPM_REGISTRY=
+
+# The same Debian bookworm as the build stage, chosen over a bare debian base for
+# a concrete reason: it ships node and npm, so if the seeded plugin dependencies
+# are ever incomplete or a future opencode wants to resolve something at runtime,
+# the tooling is present rather than the pod failing in a way that looks like a
+# hang. The cost is image size, which matters less here than a runtime that can
+# explain itself.
+
+# APT_MIRROR swaps deb.debian.org for a mirror — build-time only, and worth
+# setting when the default is slow from where you are (e.g.
+# --build-arg APT_MIRROR=mirrors.aliyun.com). Left unset the build uses Debian's
+# own mirrors, so a release build has no dependency on any one provider.
+ARG APT_MIRROR=
+
+# git is the coding agent's actual working tool; unzip and tar are required by
+# opencode itself; ca-certificates is needed to reach the model gateway.
+RUN set -eux; \
+    if [ -n "${APT_MIRROR}" ]; then \
+      sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR}|g" \
+        /etc/apt/sources.list.d/debian.sources; \
+    fi; \
+    apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl git openssh-client unzip tar \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install opencode by naming its platform binary package explicitly, rather than
+# installing the `opencode-ai` wrapper: the wrapper resolves its platform package
+# without checking libc, so on a musl base it picks a glibc binary and fails at
+# exec. Naming the package keeps that choice ours.
+#
+# The GitHub release archive is the other option and is equivalent in content, but
+# it is a second host to be reachable — and where release downloads are blocked or
+# throttled, the build stalls rather than failing, which is the worst shape. The
+# npm registry is already required by the plugin stage, and honours NPM_REGISTRY.
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) arch=x64 ;; \
+      arm64) arch=arm64 ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    if [ -n "${NPM_REGISTRY}" ]; then npm config set registry "${NPM_REGISTRY}"; fi; \
+    npm install --global --no-audit --no-fund "opencode-linux-${arch}@${OPENCODE_VERSION}"; \
+    bin="$(find /usr/local/lib/node_modules -type f -name opencode -perm -u+x | head -1)"; \
+    test -n "$bin"; \
+    ln -sf "$bin" /usr/local/bin/opencode; \
+    opencode --version
+
+# The baked home: everything opencode would otherwise fetch on first run.
+ENV AGENTPLANE_HOME_SEED=/opt/agent-plane/home-seed
+RUN mkdir -p "${AGENTPLANE_HOME_SEED}/.config/opencode" "${AGENTPLANE_HOME_SEED}/cache/opencode"
+
+COPY --from=plugin /seed/node_modules "${AGENTPLANE_HOME_SEED}/.config/opencode/node_modules"
+COPY --from=plugin /seed/package.json "${AGENTPLANE_HOME_SEED}/.config/opencode/package.json"
+# The tarball the package.json points at with file:. It has to survive into this
+# stage, or opencode's startup reconcile cannot resolve the dependency and hangs.
+COPY --from=plugin /opt/agent-plane/plugin-src /opt/agent-plane/plugin-src
+
+# The models catalog. Two sources, because this is the piece most likely to be
+# unreachable: a file in the build context if you have one (MODELS_CATALOG, e.g.
+# copied from ~/.cache/opencode/models.json), otherwise a fetch.
+#
+# Non-fatal either way — a build behind a proxy still produces a working image.
+# But an image WITHOUT the catalog will block on fetching it at first start in a
+# cluster that cannot reach models.dev, and a blocked bootstrap looks like a hang
+# rather than an error, so the entrypoint warns loudly about it.
+ARG MODELS_CATALOG=
+COPY ${MODELS_CATALOG:-package.json} /tmp/catalog-source/
+RUN set -eux; \
+    dest="${AGENTPLANE_HOME_SEED}/cache/opencode/models.json"; \
+    if [ -n "${MODELS_CATALOG}" ] && [ -s "/tmp/catalog-source/${MODELS_CATALOG}" ]; then \
+      cp "/tmp/catalog-source/${MODELS_CATALOG}" "$dest"; \
+      echo "seeded the models catalog from the build context"; \
+    else \
+      curl -fsSL --retry 3 -o "$dest" https://models.dev/api.json \
+        || echo "warning: could not pre-seed the models catalog; first start will fetch it" >&2; \
+    fi; \
+    rm -rf /tmp/catalog-source; \
+    test -s "$dest" || echo "warning: no models catalog baked into this image" >&2
+
+# Nothing Feishu-specific is baked in.
+#
+# An earlier revision installed the Feishu CLI here, which was a mistake worth
+# recording: it makes "give this agent a new capability" mean "rebuild and roll
+# the image", which is precisely what the Registry exists to avoid. A Skill's
+# instructions already arrive at runtime; the binary it drives has to as well, or
+# the dynamic half is decoration.
+#
+# Tools a Skill needs are installed by the Skill, at first use, into the agent's
+# writable home (see the lark-cli Skill in config/samples/coding). The image
+# provides only what every coding agent needs regardless of task: git, a shell,
+# and node/npm as the installer.
+COPY hack/coding-agent-entrypoint.sh /usr/local/bin/agent-plane-entrypoint
+RUN chmod 0755 /usr/local/bin/agent-plane-entrypoint
+
+# Non-root with gid 0, matching the fsGroup the Operator sets on the workspace
+# volume — that group membership is what lets the agent write the checkout and
+# its own home without the Operator knowing this image's uid.
+#
+# The home directory is created and group-writable even though the Operator
+# points HOME at the workspace volume instead: opencode creates its home on
+# startup, and a uid that cannot do so fails with an EACCES that names a path
+# nobody configured. Keeping it valid means `docker run` on this image also
+# works, which is how you debug the thing when the pod misbehaves.
+RUN useradd --uid 10001 --gid 0 --create-home --shell /bin/sh agent \
+    && chmod -R g+rwX /home/agent \
+    && chmod -R g+rX /opt/agent-plane
+USER 10001:0
+
+ENTRYPOINT ["/usr/local/bin/agent-plane-entrypoint"]

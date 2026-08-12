@@ -3,7 +3,7 @@ name: Images
 # Build and publish the container images to the GitHub Container Registry
 # (ghcr.io). Uses the built-in GITHUB_TOKEN (packages: write) — no PAT needed.
 # Images land at ghcr.io/<owner>/{agent-plane,agent-plane-registry,
-# agent-plane-runtime,agent-plane-example-mcp,agent-plane-lark-adapter}.
+# agent-plane-runtime,agent-plane-example-mcp,agent-plane-coding-agent}.
 #
 # Adding an image is one matrix entry plus its Dockerfile; everything below is
 # shared.
@@ -34,8 +34,12 @@ jobs:
             dockerfile: Dockerfile.agent-runtime
           - image: agent-plane-example-mcp
             dockerfile: Dockerfile.example-mcp
-          - image: agent-plane-lark-adapter
-            dockerfile: Dockerfile.lark-adapter
+          # opencode plus the Agent Plane plugin: the runtime for Agents with
+          # spec.workspace. It replaces the separate Lark adapter image, which
+          # is no longer built — the platform connection now lives inside this
+          # one (see docs/usage.md §14).
+          - image: agent-plane-coding-agent
+            dockerfile: Dockerfile.coding-agent
     steps:
       - name: Clone the code
         uses: actions/checkout@v4

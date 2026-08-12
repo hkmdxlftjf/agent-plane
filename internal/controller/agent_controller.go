@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -444,6 +445,52 @@ const gitCredentialMountPath = "/var/run/agentplane/git"
 // does not say. Matches the CRD default.
 const defaultWorkspaceMountPath = "/workspace"
 
+// gitCredentialHelper is the same shell-based credential helper the clone init
+// container installs, reused verbatim so the runtime container can push with
+// the identical token: it reads the mounted Secret file at call time rather
+// than embedding the token in the remote URL or the environment.
+const gitCredentialHelper = `!f() { echo "username=x-access-token"; echo "password=$(cat "$AGENTPLANE_GIT_CREDENTIAL_FILE")"; }; f`
+
+// modelCredentialMountPath is where a workspace runtime finds its model
+// credential as files, one per Secret key.
+//
+// The Registry serves Secret *coordinates* and a runtime normally reads the
+// Secret itself through the Kubernetes API (docs/runtime-protocol.md §1). A
+// runtime that is not written in Go — opencode plus a plugin, say — would need
+// a Kubernetes client to do that, and would then hold an API-server credential
+// in the same process that runs model-directed shell commands. Mounting the
+// Secret read-only instead keeps that credential out of the pod entirely; the
+// coordinate that named the key in the payload also locates it on disk.
+const modelCredentialMountPath = "/var/run/agentplane/model"
+
+// agentHomeDirName is the writable HOME a workspace runtime gets, as a
+// subdirectory of the working tree's volume.
+//
+// A workspace pod's root filesystem is read-only (see the SecurityContext
+// below), but a coding-agent runtime needs somewhere durable to keep its own
+// state — session history, caches, and (for opencode) the plugin dependencies
+// it resolves at startup. Putting HOME on the same PersistentVolumeClaim as the
+// checkout means that state survives a restart exactly as the branches do,
+// which is what makes a conversation resumable after the pod is rescheduled.
+// /tmp would be writable too, but it is an emptyDir: every restart would start
+// the conversation over.
+const agentHomeDirName = ".agent-home"
+
+func boolPtr(b bool) *bool { return &b }
+
+func int64Ptr(i int64) *int64 { return &i }
+
+// workspaceFSGroup is the group every workspace-bound pod's containers share.
+// The clone init container runs as root and the runtime container drops to
+// whatever non-root uid its image picks — a uid the Operator cannot see (see
+// the safe.directory comment below). Setting fsGroup instead of trying to
+// match uids: kubelet chowns the volume to this group and sets the setgid bit
+// on its directories, so files git creates as root are still group-writable,
+// and every container gets this group as a supplementary group regardless of
+// its own uid. That is what makes a coding agent's write_file tool and git's
+// own writes (commits, config) work without knowing the runtime image's uid.
+const workspaceFSGroup = int64(10001)
+
 func agentRuntimeLabels(agent *corev1alpha1.Agent) map[string]string {
 	return ownedLabels("agent-runtime", agent.Name)
 }
@@ -547,6 +594,32 @@ else
   else
     git clone "$REPO" "$DIR"
   fi
+fi
+# The runtime's HOME lives on this volume (see agentHomeDirName): create it here,
+# while we are still root, and tell git to ignore it. Without the exclude a
+# coding agent would see its own state directory as untracked files in the
+# repository it is working on — and could commit them.
+#
+# chmod is not optional. This step runs as root, so the directory is created
+# 0755 root-owned, and the runtime container runs as a non-root uid whose only
+# shared credential is the fsGroup — it cannot write into it and dies on
+# startup. The failure only appears on a *fresh* volume, which is why it is easy
+# to miss: an existing workspace already has a usable directory.
+#
+# The /** suffix matches the directory's *contents*, which is what survives a
+# repository whose own .gitignore re-includes directories (the "/*" then "!/*/"
+# idiom): such a negation beats a plain directory pattern in info/exclude, and
+# the agent's logs reappear as untracked files no matter what is written here.
+mkdir -p "$DIR/` + agentHomeDirName + `"
+chmod 2775 "$DIR/` + agentHomeDirName + `"
+if [ -d "$DIR/.git" ]; then
+  mkdir -p "$DIR/.git/info"
+  # All of the runtime's own directories, not just HOME: this step runs as root
+  # and the runtime may not be able to write .git/info itself.
+  for p in '/` + agentHomeDirName + `/**' '/.opencode/**' '/node_modules/**'; do
+    grep -qxF "$p" "$DIR/.git/info/exclude" 2>/dev/null \
+      || echo "$p" >> "$DIR/.git/info/exclude"
+  done
 fi`
 
 	env := []corev1.EnvVar{
@@ -610,6 +683,18 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 		gitSecret = cred.Spec.SecretRef.Name
 	}
 
+	// Resolve the model credential the same way, for workspace runtimes that
+	// read it from a file rather than through the Kubernetes API (see
+	// modelCredentialMountPath). Best-effort on purpose: an Agent whose Model or
+	// Credential is not resolvable yet is already reported as not Ready by the
+	// dependency check, and failing the whole reconcile here would keep the
+	// Deployment from existing at all — the runtime is expected to start, log
+	// that the credential is missing, and converge when it appears.
+	modelSecret := ""
+	if ws != nil {
+		modelSecret = r.resolveModelSecret(ctx, agent)
+	}
+
 	if ws != nil {
 		if err := r.reconcileWorkspace(ctx, agent); err != nil {
 			return err
@@ -643,26 +728,85 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 			dep.Spec.Strategy = appsv1.DeploymentStrategy{}
 			dep.Spec.Template.Spec.InitContainers = nil
 			dep.Spec.Template.Spec.Volumes = nil
+			dep.Spec.Template.Spec.SecurityContext = nil
 		} else {
 			mount := workspaceMountPath(ws)
+			// Declaring the tree safe through git's environment-based config avoids
+			// having to know the runtime image's uid, which the Operator cannot see
+			// (the clone init container runs as root; the runtime image typically
+			// drops to a non-root uid, and git refuses to operate on a tree owned by
+			// a different user — "detected dubious ownership"). Writing ~/.gitconfig
+			// would need that uid's home directory to exist and be writable; this
+			// does not.
+			gitConfigCount := 1
+			gitConfigEnv := []corev1.EnvVar{
+				{Name: "GIT_CONFIG_KEY_0", Value: "safe.directory"},
+				{Name: "GIT_CONFIG_VALUE_0", Value: mount},
+			}
+			mounts := []corev1.VolumeMount{
+				{Name: workspaceVolumeName, MountPath: mount},
+				// A coding agent's bash/file tools are the actual sandbox boundary: the
+				// container's SecurityContext below locks the root filesystem read-only,
+				// so anything a build or editor writes outside the working tree (caches,
+				// temp files) needs somewhere to land.
+				{Name: "tmp", MountPath: "/tmp"},
+			}
+			if gitSecret != "" {
+				// The runtime container needs the same push credential the clone step
+				// used to read the repository — otherwise a coding agent can read but
+				// never push its own commits. Mounted read-only and consumed through a
+				// credential helper, never interpolated into the remote URL.
+				gitConfigCount = 2
+				gitConfigEnv = append(gitConfigEnv,
+					corev1.EnvVar{Name: "GIT_CONFIG_KEY_1", Value: "credential.helper"},
+					corev1.EnvVar{Name: "GIT_CONFIG_VALUE_1", Value: gitCredentialHelper},
+				)
+				mounts = append(mounts, corev1.VolumeMount{
+					Name:      "git-credential",
+					MountPath: gitCredentialMountPath,
+					ReadOnly:  true,
+				})
+			}
+			if modelSecret != "" {
+				mounts = append(mounts, corev1.VolumeMount{
+					Name:      "model-credential",
+					MountPath: modelCredentialMountPath,
+					ReadOnly:  true,
+				})
+			}
+			// HOME must be writable and durable: the root filesystem is read-only,
+			// and a runtime that keeps conversation state (or resolves plugin
+			// dependencies) at startup needs that to survive a restart. XDG_* are
+			// set alongside HOME because tools split state across them and only
+			// some derive from HOME.
+			home := mount + "/" + agentHomeDirName
 			container.Env = append(container.Env,
 				corev1.EnvVar{Name: "AGENTPLANE_WORKSPACE", Value: mount},
-				// The clone init container runs as its own image's user (root),
-				// while the runtime image typically drops to a non-root uid. git
-				// refuses to operate on a tree owned by a different user
-				// ("detected dubious ownership"), which breaks every command the
-				// agent exists to run — on a checkout that is otherwise fine.
-				//
-				// Declaring the tree safe through git's environment-based config
-				// avoids having to know the runtime image's uid, which the Operator
-				// cannot see. Writing ~/.gitconfig would need that uid's home
-				// directory to exist and be writable; this does not.
-				corev1.EnvVar{Name: "GIT_CONFIG_COUNT", Value: "1"},
-				corev1.EnvVar{Name: "GIT_CONFIG_KEY_0", Value: "safe.directory"},
-				corev1.EnvVar{Name: "GIT_CONFIG_VALUE_0", Value: mount},
+				corev1.EnvVar{Name: "AGENTPLANE_AGENT_HOME", Value: home},
+				corev1.EnvVar{Name: "HOME", Value: home},
+				corev1.EnvVar{Name: "XDG_CONFIG_HOME", Value: home + "/.config"},
+				corev1.EnvVar{Name: "XDG_DATA_HOME", Value: home + "/share"},
+				corev1.EnvVar{Name: "XDG_STATE_HOME", Value: home + "/state"},
+				corev1.EnvVar{Name: "XDG_CACHE_HOME", Value: home + "/cache"},
+				corev1.EnvVar{Name: "AGENTPLANE_GIT_CREDENTIAL_FILE", Value: gitCredentialMountPath + "/token"},
+				corev1.EnvVar{Name: "GIT_CONFIG_COUNT", Value: strconv.Itoa(gitConfigCount)},
 			)
-			container.VolumeMounts = []corev1.VolumeMount{
-				{Name: workspaceVolumeName, MountPath: mount},
+			container.Env = append(container.Env, gitConfigEnv...)
+			container.VolumeMounts = mounts
+
+			// A workspace-bound runtime executes model-directed shell commands against
+			// a real checkout, so it gets the same isolation a build sandbox would:
+			// no root, no added Linux capabilities, no privilege escalation, the
+			// default seccomp profile, and a read-only root filesystem — the working
+			// tree and /tmp are the only writable paths. This is enforced by the
+			// container runtime, not by the agent's own tool code, so it holds even
+			// if a tool implementation has a bug.
+			container.SecurityContext = &corev1.SecurityContext{
+				AllowPrivilegeEscalation: boolPtr(false),
+				ReadOnlyRootFilesystem:   boolPtr(true),
+				RunAsNonRoot:             boolPtr(true),
+				Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+				SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 			}
 
 			// A working tree has exactly one writer. RollingUpdate would start the
@@ -673,14 +817,17 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 			dep.Spec.Replicas = &one
 			dep.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
 
-			volumes := []corev1.Volume{{
-				Name: workspaceVolumeName,
-				VolumeSource: corev1.VolumeSource{
-					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: workspaceClaimName(agent),
+			volumes := []corev1.Volume{
+				{
+					Name: workspaceVolumeName,
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: workspaceClaimName(agent),
+						},
 					},
 				},
-			}}
+				{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			}
 			if gitSecret != "" {
 				volumes = append(volumes, corev1.Volume{
 					Name: "git-credential",
@@ -689,9 +836,20 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 					},
 				})
 			}
+			if modelSecret != "" {
+				volumes = append(volumes, corev1.Volume{
+					Name: "model-credential",
+					VolumeSource: corev1.VolumeSource{
+						Secret: &corev1.SecretVolumeSource{SecretName: modelSecret},
+					},
+				})
+			}
 			dep.Spec.Template.Spec.Volumes = volumes
 			dep.Spec.Template.Spec.InitContainers = []corev1.Container{
 				cloneInitContainer(agent, gitSecret != ""),
+			}
+			dep.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
+				FSGroup: int64Ptr(workspaceFSGroup),
 			}
 		}
 
@@ -727,6 +885,40 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 		agent.Status.WorkspaceClaim = ""
 	}
 	return nil
+}
+
+// resolveModelSecret returns the Secret name holding the Agent's model
+// credential, or "" when it cannot be resolved yet.
+//
+// It walks the same path the Registry does (Agent → effective spec → Model →
+// Credential → Secret), so a runtime that reads the credential from a file sees
+// exactly the Secret whose coordinates the Registry reported. Every step is
+// best-effort: this only decides whether to add a volume, and an Agent missing
+// its Model is already surfaced as not Ready by the dependency check.
+func (r *AgentReconciler) resolveModelSecret(ctx context.Context, agent *corev1alpha1.Agent) string {
+	var class *corev1alpha1.AgentClass
+	if ref := agent.Spec.AgentClassRef; ref != nil {
+		var c corev1alpha1.AgentClass
+		if err := r.Get(ctx, types.NamespacedName{Namespace: agent.Namespace, Name: ref.Name}, &c); err == nil {
+			class = &c
+		}
+	}
+	eff := corev1alpha1.ApplyClassDefaults(agent.Spec, class)
+	if eff.ModelRef == nil {
+		return ""
+	}
+	var model corev1alpha1.Model
+	if err := r.Get(ctx, types.NamespacedName{Namespace: agent.Namespace, Name: eff.ModelRef.Name}, &model); err != nil {
+		return ""
+	}
+	if model.Spec.CredentialRef == nil {
+		return ""
+	}
+	var cred corev1alpha1.Credential
+	if err := r.Get(ctx, types.NamespacedName{Namespace: agent.Namespace, Name: model.Spec.CredentialRef.Name}, &cred); err != nil {
+		return ""
+	}
+	return cred.Spec.SecretRef.Name
 }
 
 // peerServiceName is the Service other Agents dial to consult this one.

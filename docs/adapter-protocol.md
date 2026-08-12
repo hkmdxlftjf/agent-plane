@@ -72,8 +72,7 @@ Check for `error` — it arrives with HTTP 200, not a 5xx.
 
 A runtime **may** additionally return `confirmation` alongside `answer`, when
 the model wants to pause a destructive or uncertain action and hand the
-decision to the user rather than guess (`cmd/coding-agent`'s
-`request_confirmation` tool is the reference producer of this field):
+decision to the user rather than guess:
 
 ```json
 {
@@ -91,10 +90,23 @@ decision to the user rather than guess (`cmd/coding-agent`'s
 This is additive, not a replacement for `answer` — an adapter that doesn't
 look at `confirmation` still shows the user something reasonable, because
 `answer` already describes the pending action in prose. An adapter that does
-render it (e.g. `cmd/lark-adapter` turns it into an interactive card with one
-button per option) must feed the user's choice back through the **same**
-`sessionId` as an ordinary `POST /api/chat` message — a card click is not a
-new wire call, just a different way of producing the next `message`.
+render it (as an interactive card with one button per option, say) must feed the
+user's choice back through the **same** `sessionId` as an ordinary
+`POST /api/chat` message — a card click is not a new wire call, just a different
+way of producing the next `message`.
+
+Two things this field cannot do, and they are why the coding-agent runtime no
+longer uses it (§7):
+
+- **A prompt cannot enforce it.** For the runtime to pause, the model has to
+  choose to call the tool that pauses. Nothing stops it from doing the risky
+  thing first and asking afterwards.
+- **The pause is a new turn, not a suspended one.** The runtime answers, the
+  adapter asks, the user replies, and the runtime starts over from a fresh
+  message — so whatever exploration led to the question is either redone or
+  lost. A runtime whose agent loop can genuinely block mid-turn (opencode's
+  permission system does) gets a stronger guarantee by keeping the approval
+  inside its own process.
 
 **Rule 2 — use the platform's conversation id as `sessionId`.**
 
@@ -165,30 +177,41 @@ so, rather than injecting an address nothing listens on.
 
 ---
 
-## 5. The reference implementation
+## 5. Decisions any adapter faces
 
-`cmd/lark-adapter` implements this contract for Lark (Feishu) and is built by
-`Dockerfile.lark-adapter`. Read it as the worked answer to everything below;
-these are the decisions it makes that any adapter faces.
+This repository no longer ships a Go adapter — the Lark integration moved into
+the coding-agent runtime as an opencode plugin (§7), and the platform-specific
+logic went with it. The decisions below were made against the real platform and
+apply to any adapter, in any language; they are the expensive part to rediscover.
 
-**Long connection over webhook.** The adapter dials out to Lark and holds a
-WebSocket, so nothing has to reach the pod from the internet — no ingress, no TLS
-certificate, no public URL to register. A cluster with only egress can run it.
+**Long connection over webhook.** Dial out and hold the socket, so nothing has to
+reach the pod from the internet — no ingress, no TLS certificate, no public URL to
+register. A cluster with only egress can run it.
 
-**A failed turn is answered, not retried.** The event handler returns nil even
-when the agent errored, because returning an error makes the SDK treat the event
-as undelivered and Lark redelivers it — so a broken agent would be asked the same
-question over and over. The user already has the error in the chat.
+**A failed turn is answered, not retried.** Do not return an error to the
+platform SDK when the *agent* failed: most SDKs treat that as undelivered and the
+platform redelivers, so a broken agent is asked the same question forever. Put
+the error in the chat instead.
 
 **Non-text messages get a reply, not silence.** An image or file forwarded raw
-would reach the model as the JSON of its payload. The adapter says it can only
-read text, which is a better failure than a confused answer.
+reaches the model as the JSON of its payload. Saying "I can only read text" is a
+better failure than a confused answer.
 
 **Credentials are read from files and trimmed.** They arrive as a mount, and a
-trailing newline — what `--from-file` and most editors produce — makes Lark
-reject the handshake with an error that never mentions whitespace.
+trailing newline — what `--from-file` and most editors produce — makes the
+handshake fail with an error that never mentions whitespace.
 
-Configuration it reads from `spec.config`, both optional:
+**Deduplicate on the platform's event id.** Platforms retry. A redelivered
+message costs an extra model call; a redelivered button click can register a
+second decision, or race itself updating the same card.
+
+**Answer an interaction callback immediately, then follow up.** Button and card
+callbacks have short deadlines that a real agent turn will miss. Acknowledge
+receipt synchronously, do the work in the background, and send the answer as a
+new message when it is ready.
+
+Configuration read from `spec.config` (both optional, and what the Go adapter
+used to accept):
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -252,3 +275,36 @@ sending a proactive message, looking up a record — declare a `Tool`, usually
 `type: mcp` pointing at that platform's MCP server. See
 [usage.md](usage.md) §4. The two compose: an adapter brings the question in, and
 Tools let the Agent act while answering it.
+
+---
+
+## 9. When this contract does not apply
+
+This contract assumes the platform connection and the agent are **separate
+processes**: the adapter POSTs, the runtime answers. That separation is what makes
+the platform swappable — a new IM is a new image and a new `Trigger`, with no
+control-plane change.
+
+It costs something, and for one shape the cost is too high. A **coding agent
+whose approvals must be enforced** needs the thing that blocks a tool call and the
+thing that shows the user a button to be the same process. Over this contract they
+cannot be: `/api/chat` is request/response, so a runtime that wants approval has
+to end its turn, return a `confirmation` (§3), and be asked again — and the model
+must have volunteered to pause in the first place. A model that decides not to
+call the pause tool simply does not pause.
+
+So `Dockerfile.coding-agent` does not implement this contract. It runs opencode
+with a plugin that holds the Lark connection in-process, and lets opencode's own
+permission system block the turn. The approval is enforced by the tool layer
+rather than requested in a prompt, and answering it *resumes* the paused turn
+instead of starting a new one — the work leading up to the question is not redone.
+
+The tradeoff is explicit, and it is the mirror of §1: one moving part instead of
+two, and a real approval loop, in exchange for a platform that is no longer
+swappable by changing a `Trigger` image. Adding DingTalk there means another
+plugin, not another Trigger.
+
+**Which to use.** If the Agent answers questions, use this contract — it is
+simpler, and the adapter is reusable across runtimes. If the Agent writes to a
+repository and you need approvals that hold even when the model would rather not
+ask, put the platform inside the runtime. See [usage.md](usage.md) §14.
