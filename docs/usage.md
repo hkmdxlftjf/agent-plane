@@ -261,7 +261,24 @@ spec:
     replicas: 2
     port: 8080                     # optional → also creates a Service
     # env: [...]  resources: {...}
+    # readinessProbe: {...}         # optional → see "Readiness" below
+    # runtimeClassName: gvisor      # optional → schedule onto a sandboxed runtime
 ```
+
+**Readiness.** For a plain runtime, no probe is set: an Agent that serves
+`/api/chat` is ready as soon as it listens. Workspace-bound runtimes get a
+default probe instead, because for them listening and working are not the same
+thing — see §14.
+
+**`runtimeClassName`** picks a container runtime for the pod, e.g. a
+syscall-intercepting sandbox such as gVisor or Kata. The pod-level isolation the
+Operator already applies to workspace runtimes (non-root, no capabilities,
+read-only root filesystem) is enforced by the host kernel; a sandboxed runtime
+additionally raises the cost of escaping it, which is worth paying for when the
+Agent executes model-directed shell commands. The named RuntimeClass must exist
+in the cluster already — naming one that does not leaves pods `Pending` with no
+other symptom. Clearing the field moves the Agent back to the default runtime on
+the next rollout.
 
 The Operator injects into each runtime pod:
 
@@ -603,6 +620,20 @@ Whichever shape, three things are worth knowing before you build on it:
   rather than fail, which is much harder to diagnose than an error.
   `Dockerfile.coding-agent` pre-installs the plugin's dependencies and the model
   catalog for exactly this reason.
+- **`1/1 Running` is not evidence that it works, so a workspace runtime gets a
+  readiness probe by default.** A projecting runtime binds its port and answers a
+  health endpoint *before* it has fetched anything, so a failed projection — an
+  unreachable Registry, a plugin that did not load, a config hook that threw —
+  looks exactly like a healthy pod while every request hangs. The default probe
+  therefore does not check liveness; it asks for the runtime's own config and
+  requires the projected model to be in it, which is only true once projection
+  succeeded. Two things follow. A slow first start is not a failure, so
+  `failureThreshold` is deliberately generous (a cold volume may spend minutes
+  fetching a model catalog). And because opencode reads config only at startup,
+  a pod that failed to project **never recovers on its own** — restoring the
+  Registry does not fix it; the pod has to be replaced. Readiness staying false
+  is the correct report of that, not an over-strict probe. Override with
+  `spec.runtime.readinessProbe` for a runtime that exposes a better signal.
 - **ToolPolicy governs declared Tools, not the agent's built-ins.** `bash`,
   `edit`, and friends are not Tool CRs, so a ToolPolicy says nothing about them,
   and `maxCallsPerSession` has no equivalent. Neither does a Skill's

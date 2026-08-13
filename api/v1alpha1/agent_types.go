@@ -243,6 +243,34 @@ type AgentRuntimeSpec struct {
 	// resources is the runtime container resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// readinessProbe overrides how readiness is decided for this runtime.
+	//
+	// Set it when "the process is listening" and "the agent can answer" are not
+	// the same thing — which is the common case for a runtime that does work at
+	// startup. A runtime that fetches config, resolves plugins, or opens an
+	// upstream connection can bind its port, answer a trivial health endpoint,
+	// and still hang on every real request; without a probe that distinguishes
+	// the two, Kubernetes reports 1/1 Running and the failure is invisible.
+	//
+	// Left unset, a workspace-bound runtime gets a default probe (see
+	// defaultWorkspaceReadinessProbe in internal/controller) and any other
+	// runtime gets none — an Agent that only serves /api/chat is ready as soon as
+	// it listens.
+	// +optional
+	ReadinessProbe *corev1.Probe `json:"readinessProbe,omitempty"`
+
+	// runtimeClassName selects a container runtime for the pod, e.g. "gvisor"
+	// for a syscall-intercepting sandbox.
+	//
+	// Worth setting when the Agent runs code you do not trust: a coding agent
+	// executes model-directed shell commands, and the container-level sandbox the
+	// Operator applies (read-only root filesystem, no capabilities, non-root)
+	// is enforced by the host kernel. A sandboxed runtime raises the cost of a
+	// kernel escape, at some latency. The named RuntimeClass must already exist
+	// in the cluster; naming one that does not leaves pods Pending.
+	// +optional
+	RuntimeClassName string `json:"runtimeClassName,omitempty"`
 }
 
 // AgentPhase is a coarse, human-facing summary of an Agent's reconcile state.

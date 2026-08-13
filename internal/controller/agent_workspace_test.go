@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -366,6 +367,23 @@ var _ = Describe("Agent workspace", func() {
 			// without the group-write bit the runtime cannot start on a fresh volume.
 			Expect(clone.Command).To(ContainElement(ContainSubstring("chmod 2775")))
 
+			By("reporting ready only once the runtime has projected its config")
+			// Every startup failure this shape has hit looks the same from outside:
+			// the port is bound, a health endpoint answers, and real requests hang.
+			// A probe that only checks liveness would call that ready, so this one
+			// asserts on the projected config instead.
+			probe := runtime.ReadinessProbe
+			Expect(probe).NotTo(BeNil(), "a workspace runtime with a port must have a readiness probe")
+			Expect(probe.Exec).NotTo(BeNil(), "must inspect the response body, not just a status code")
+			Expect(probe.Exec.Command).To(ContainElement(ContainSubstring("/config")))
+			// Anchored on the selected model, not the bare provider id: the id also
+			// occurs in the plugin's file path, so the loose form would pass on a boot
+			// where projection never happened — the one case worth detecting.
+			Expect(probe.Exec.Command).To(ContainElement(ContainSubstring(projectedModelMarker)))
+			Expect(projectedModelMarker).NotTo(Equal("agent-plane"))
+			// A cold first start legitimately takes minutes; slow must not read as broken.
+			Expect(probe.FailureThreshold * probe.PeriodSeconds).To(BeNumerically(">=", 120))
+
 			By("mounting the model credential read-only, so no Kubernetes client is needed")
 			var mounted bool
 			for _, m := range runtime.VolumeMounts {
@@ -428,6 +446,71 @@ var _ = Describe("Agent workspace", func() {
 	// with. Without this field the pods run as the namespace's "default"
 	// ServiceAccount, and the only way to grant the Secret read is to bind it to
 	// "default" — which grants it to every unrelated pod in the namespace too.
+	Context("When an Agent overrides readiness and picks a sandboxed runtime", func() {
+		const agentName = "test-sandboxed-agent"
+		agentKey := types.NamespacedName{Name: agentName, Namespace: nsDefault}
+		depKey := types.NamespacedName{Name: agentName + "-runtime", Namespace: nsDefault}
+
+		BeforeEach(func() {
+			agent := &corev1alpha1.Agent{
+				ObjectMeta: metav1.ObjectMeta{Name: agentName, Namespace: nsDefault},
+				Spec: corev1alpha1.AgentSpec{
+					ModelRef: &corev1alpha1.LocalReference{Name: testAnyModel},
+					Runtime: &corev1alpha1.AgentRuntimeSpec{
+						Image:            "example/runtime:v1",
+						Port:             4096,
+						RuntimeClassName: "gvisor",
+						ReadinessProbe: &corev1.Probe{
+							ProbeHandler: corev1.ProbeHandler{
+								HTTPGet: &corev1.HTTPGetAction{Path: "/ready", Port: intstr.FromInt32(4096)},
+							},
+						},
+					},
+					Workspace: &corev1alpha1.AgentWorkspaceSpec{Repository: "https://example.com/x.git"},
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
+		})
+
+		AfterEach(func() {
+			deleteIfExists(ctx, agentKey, &corev1alpha1.Agent{})
+			deleteIfExists(ctx, depKey, &appsv1.Deployment{})
+			deleteIfExists(ctx, types.NamespacedName{Name: agentName + "-workspace", Namespace: nsDefault}, &corev1.PersistentVolumeClaim{})
+		})
+
+		It("uses the given probe and schedules onto the named runtime class", func() {
+			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, depKey, dep)).To(Succeed())
+
+			By("preferring the Agent's own probe over the workspace default")
+			probe := dep.Spec.Template.Spec.Containers[0].ReadinessProbe
+			Expect(probe).NotTo(BeNil())
+			Expect(probe.HTTPGet).NotTo(BeNil(), "an explicit probe must not be replaced by the default exec one")
+			Expect(probe.HTTPGet.Path).To(Equal("/ready"))
+			Expect(probe.Exec).To(BeNil())
+
+			By("naming the RuntimeClass on the pod, not the container")
+			Expect(dep.Spec.Template.Spec.RuntimeClassName).NotTo(BeNil())
+			Expect(*dep.Spec.Template.Spec.RuntimeClassName).To(Equal("gvisor"))
+
+			By("clearing the RuntimeClass when the Agent stops asking for one")
+			// Removing the field has to take effect on an existing Deployment, or an
+			// Agent could never be moved back off a sandbox it was pinned to.
+			agent := &corev1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, agentKey, agent)).To(Succeed())
+			agent.Spec.Runtime.RuntimeClassName = ""
+			Expect(k8sClient.Update(ctx, agent)).To(Succeed())
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, depKey, dep)).To(Succeed())
+			Expect(dep.Spec.Template.Spec.RuntimeClassName).To(BeNil())
+		})
+	})
+
 	Context("When an Agent names a ServiceAccount", func() {
 		const agentName = "test-sa-agent"
 		agentKey := types.NamespacedName{Name: agentName, Namespace: nsDefault}
@@ -497,6 +580,11 @@ var _ = Describe("Agent workspace", func() {
 			// The single-writer pinning is workspace-specific; a stateless runtime
 			// keeps whatever replica count it asked for.
 			Expect(*dep.Spec.Replicas).To(Equal(int32(2)))
+			// No probe is imposed either. The default one asks for projected config,
+			// which is a workspace-runtime concept; a runtime that just serves
+			// /api/chat would be marked permanently unready by it.
+			Expect(dep.Spec.Template.Spec.Containers[0].ReadinessProbe).To(BeNil())
+			Expect(dep.Spec.Template.Spec.RuntimeClassName).To(BeNil())
 
 			pvc := &corev1.PersistentVolumeClaim{}
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: agentName + "-workspace", Namespace: nsDefault}, pvc)

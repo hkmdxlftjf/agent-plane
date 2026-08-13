@@ -476,6 +476,50 @@ const modelCredentialMountPath = "/var/run/agentplane/model"
 // the conversation over.
 const agentHomeDirName = ".agent-home"
 
+// defaultWorkspaceReadinessProbe is what "ready" means for a workspace-bound
+// runtime when the Agent does not say.
+//
+// It deliberately does not probe a health endpoint. A coding-agent runtime does
+// real work before it can answer — fetches its config, resolves plugins, opens an
+// upstream connection — and while that is in flight it already listens on its
+// port and already answers a trivial health check. Every startup failure this
+// repository has hit looked identical from the outside: 1/1 Running, health 200,
+// and every request hanging forever. A probe that cannot tell those apart reports
+// the pod as ready and hides the failure.
+//
+// So the probe asks for the config the runtime is supposed to have *projected*,
+// and requires the Agent Plane provider to be in it. That string is only present
+// once startup got far enough to matter. failureThreshold is generous because the
+// first start on a cold volume legitimately takes minutes (a model catalog can be
+// megabytes); a slow start should not be reported as a broken one.
+func defaultWorkspaceReadinessProbe(port int32) *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			Exec: &corev1.ExecAction{
+				Command: []string{
+					"sh", "-c",
+					fmt.Sprintf("curl -sf -m 5 http://127.0.0.1:%d/config | grep -q '%s'", port, projectedModelMarker),
+				},
+			},
+		},
+		InitialDelaySeconds: 20,
+		PeriodSeconds:       15,
+		TimeoutSeconds:      10,
+		FailureThreshold:    12,
+	}
+}
+
+// projectedModelMarker is the substring a *projected* runtime config contains,
+// and an unprojected one does not.
+//
+// Matching the bare provider id would be wrong, and wrongly reassuring: the
+// string "agent-plane" also appears in the plugin's own file path, which the
+// entrypoint writes into the config before opencode has done anything — so that
+// looser check reports ready on precisely the boot where projection failed.
+// Anchoring on the selected model instead means the probe only passes once the
+// runtime has resolved a Model through the Registry and pointed itself at it.
+const projectedModelMarker = `"model":"agent-plane/`
+
 func boolPtr(b bool) *bool { return &b }
 
 func int64Ptr(i int64) *int64 { return &i }
@@ -722,7 +766,15 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 		if rt.Port != 0 {
 			container.Ports = []corev1.ContainerPort{{Name: portNameHTTP, ContainerPort: rt.Port}}
 		}
-
+		// An explicit probe wins; a workspace runtime with a port gets the default
+		// (see defaultWorkspaceReadinessProbe). Everything else stays unprobed:
+		// for a runtime that only serves /api/chat, listening really is ready.
+		switch {
+		case rt.ReadinessProbe != nil:
+			container.ReadinessProbe = rt.ReadinessProbe
+		case ws != nil && rt.Port != 0:
+			container.ReadinessProbe = defaultWorkspaceReadinessProbe(rt.Port)
+		}
 		if ws == nil {
 			// Clear anything left behind by a workspace that was removed.
 			dep.Spec.Strategy = appsv1.DeploymentStrategy{}
@@ -855,6 +907,14 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 
 		dep.Spec.Template.Spec.Containers = []corev1.Container{container}
 		dep.Spec.Template.Spec.ServiceAccountName = rt.ServiceAccountName
+		// Assigned unconditionally, including the empty case: clearing the field is
+		// how removing spec.runtime.runtimeClassName takes effect, since this is a
+		// CreateOrUpdate over an existing Deployment.
+		dep.Spec.Template.Spec.RuntimeClassName = nil
+		if rt.RuntimeClassName != "" {
+			runtimeClass := rt.RuntimeClassName
+			dep.Spec.Template.Spec.RuntimeClassName = &runtimeClass
+		}
 		return controllerutil.SetControllerReference(agent, dep, r.Scheme)
 	}); err != nil {
 		return err

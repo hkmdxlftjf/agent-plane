@@ -127,8 +127,17 @@ spec:
     # without egress to npm or models.dev still starts.
     image: agent-plane-coding-agent:local
     # port is optional for this shape — nothing POSTs to this Agent. Set it if
-    # you want the Service, e.g. to reach opencode's own API or web UI.
+    # you want the Service, e.g. to reach opencode's own API or web UI. Setting it
+    # also enables the default readiness probe, which is worth having: this
+    # runtime answers /api/health long before it has projected any config, so
+    # without the probe a failed startup reports 1/1 Running while every message
+    # hangs. See docs/usage.md §14.
     port: 4096
+    # runtimeClassName: gvisor
+    # Uncomment if the cluster has a sandboxed runtime installed. This Agent runs
+    # shell commands a model chose, so the kernel boundary is load-bearing; the
+    # container already runs non-root with no capabilities and a read-only root
+    # filesystem. Naming a RuntimeClass that does not exist leaves pods Pending.
     # The identity that reads the model credential. Also what keeps the Secret
     # read off the namespace's "default" ServiceAccount.
     serviceAccountName: agent-runtime
