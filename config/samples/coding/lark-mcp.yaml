@@ -45,6 +45,11 @@ spec:
   # Built from Dockerfile.lark-mcp. The CRD has no command field — an MCP server
   # image is expected to start its server as its entrypoint — so the wrapper and
   # the pinned version live there.
+  #
+  # The :local tag means "whatever is already on the node", which is what makes a
+  # locally built image usable in OrbStack or kind (any other tag would send the
+  # kubelet to a registry). CI also publishes this image, so on a real cluster use
+  # ghcr.io/hkmdxlftjf/agent-plane-lark-mcp:<tag> instead.
   image: agent-plane-lark-mcp:local
   transport: http
   port: 3000

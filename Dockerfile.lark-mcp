@@ -38,6 +38,14 @@ USER 10001:0
 # <SERVICE_NAME>_PORT=tcp://<ip>:<port> for every Service in the namespace, so a
 # Service named lark-mcp overwrites LARK_MCP_PORT with a URL. The server then
 # tries to bind that address and dies with EACCES.
+# Two libsecret warnings at startup are expected and harmless:
+#
+#   Failed to initialize encryption: libsecret-1.so.0: cannot open shared object file
+#
+# lark-mcp tries to keep user access tokens in an OS keyring, which a container has
+# no business having. It falls back to an in-memory store and says so. Irrelevant
+# here because --token-mode tenant_access_token stores no user token at all —
+# noted so the warning is not mistaken for the cause of a real failure.
 ENV AGENTPLANE_MCP_PORT=3000
 ENTRYPOINT ["sh", "-c", "exec lark-mcp mcp \
   -a \"$LARK_APP_ID\" -s \"$LARK_APP_SECRET\" \

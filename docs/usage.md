@@ -601,6 +601,14 @@ credentials, MCP servers and permissions, and be finished before the first turn.
 No sidecar, no `/api/chat` translation, and the inbound platform connection can
 live in the same process (§Talking to it from an IM client).
 
+> **The plugin lives in its own repository, and must be published before the
+> image can be built anywhere but a laptop.** `Dockerfile.coding-agent` installs
+> it by version; with nothing published, that install 404s and the image build
+> fails in CI while succeeding locally, because a local build passes
+> `--build-arg PLUGIN_TARBALL=…` and points npm at a tarball instead. Publish the
+> version, then build — the `PLUGIN_TARBALL` path is for testing a change before
+> publishing it, not for releases.
+
 **A shell, out-of-process** — for a CLI with no plugin system. The shell writes
 the config files, serves `POST /api/chat` (§runtime protocol), execs the CLI per
 turn, and maps the caller's `sessionId` to the CLI's own session so follow-ups
