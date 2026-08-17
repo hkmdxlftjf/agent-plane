@@ -5,4 +5,5 @@ resources:
 - travel/policy.yaml
 - inbound/lark-trigger.yaml
 - coding/repo-agents.yaml
+- skills/claude-api.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

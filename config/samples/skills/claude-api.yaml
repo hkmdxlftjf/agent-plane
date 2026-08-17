@@ -1,0 +1,325 @@
+# The claude-api skill, as Agent Plane Skills.
+#
+# Upstream this is a directory: a SKILL.md that routes, a shared/ folder, and one
+# subdirectory per language, read on demand. A Skill CR carries a single markdown
+# body, so the directory becomes several Skills — the router plus one per language
+# — and progressive disclosure moves up a level: instead of the model reading
+# SKILL.md and then opening python/, it sees every description and loads the one
+# body it needs. Same property, expressed with the primitive that exists.
+#
+# That reshaping only works because this skill is *documentation*. A skill whose
+# instructions call its own scripts does not convert this way: the body would tell
+# the model to run a file that is not in the pod, and a Skill CR has nowhere to put
+# one. Such a skill needs its executable half published as a Tool — an MCP server
+# image, the shape config/samples/coding/lark-mcp.yaml uses — with the Skill
+# reduced to the prose that explains when to reach for it.
+#
+# Attach the router plus whichever languages the Agent actually writes:
+#
+#   kubectl patch agent my-agent --type merge -p \
+#     '{"spec":{"skillRefs":[{"name":"claude-api"},{"name":"claude-api-python"}]}}'
+#
+# Attaching all of them is wasteful rather than harmful: descriptions are always
+# in context, bodies are not, so the cost of an unused language Skill is one line.
+#
+# ---------------------------------------------------------------------------
+# Two things to know before relying on this.
+#
+# The model IDs and the API-drift table are the load-bearing content, and they
+# are dated. Both were current in August 2026. A Skill is a document, and the
+# Operator cannot tell a stale document from a fresh one — when a new model ships,
+# the pricing table here is wrong and nothing will say so. spec.version is how you
+# track that; bump it when you edit, and treat a version far behind the current
+# model line-up as suspect.
+#
+# The language bodies are condensed. Upstream ships far more per language than
+# fits here (streaming helpers, batching, error taxonomies, per-feature platform
+# availability), and what is kept is what changes the shape of the code you write:
+# the client call, the tool-use entry point, the model string. For anything beyond
+# that the honest instruction is the one each body ends with — read the SDK's own
+# documentation rather than guessing from another language's shape, which is
+# exactly the failure mode the upstream skill warns about.
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Skill
+metadata:
+  name: claude-api
+  labels:
+    app.kubernetes.io/part-of: claude-api
+spec:
+  # Level 1 of progressive disclosure: this line is in context for every turn, so
+  # it has to be enough to decide relevance and nothing more.
+  description: >-
+    Choosing a Claude surface and model when building an LLM-powered application:
+    which model ID to use, which API shapes have changed since training, and
+    whether the task needs a single call, a workflow, or an agent. Load a
+    claude-api-<language> skill for SDK code.
+  version: "2026.08"
+  content: |
+    # Building LLM-powered applications with Claude
+
+    Read this before writing code that calls Claude. It decides three things:
+    the model, the surface, and which of your recalled API shapes are stale.
+
+    ## Model default
+
+    Use `claude-opus-5` unless the user names a different model. Do not
+    downgrade for cost — that is the user's decision to make, not yours.
+
+    | Model | ID | Context | In $/1M | Out $/1M |
+    |---|---|---|---|---|
+    | Opus 5 | `claude-opus-5` | 1M | $5 | $25 |
+    | Sonnet 5 | `claude-sonnet-5` | 1M | $3 | $15 |
+    | Haiku 4.5 | `claude-haiku-4-5` | 200K | $1 | $5 |
+    | Fable 5 | `claude-fable-5` | 1M | $10 | $50 |
+
+    These ID strings are complete. **Never append a date suffix** — not
+    `claude-sonnet-5-20251114`, not any other variant. A date-suffixed ID you
+    recall from training is a training artifact, and it will 404.
+
+    Default to adaptive thinking for anything non-trivial, and to streaming for
+    any request with long input, long output, or a high `max_tokens` — without
+    streaming those hit the request timeout.
+
+    ## Your training prior is stale on these
+
+    Verify against the language skill before writing. These are the shapes that
+    changed most recently, and the first one is a hard error rather than a
+    deprecation:
+
+    | Area | What you probably recall | Current |
+    |---|---|---|
+    | Extended thinking | `thinking: {type: "enabled", budget_tokens: N}` | `thinking: {type: "adaptive"}`. `budget_tokens` is **rejected with a 400** on Opus 5, Sonnet 5 and Fable 5. |
+    | Web search tool | `web_search_20250305` | `web_search_20260209` on Opus 5 / Sonnet 5 |
+    | Web fetch tool | `web_fetch_20250910` | `web_fetch_20260209` |
+
+    ## Which surface
+
+    Start at the simplest tier that does the job. Reach for an agent only when
+    the task is genuinely open-ended.
+
+    | Task | Surface |
+    |---|---|
+    | Classify, summarize, extract, answer | one `POST /v1/messages` call |
+    | Multi-step pipeline, logic you control | Messages API + tool use, your loop |
+    | Agent with your own tools | Messages API + the SDK's tool runner |
+    | Agent needing a hosted workspace, a schedule, or persisted config | Managed Agents |
+
+    Before choosing the agent tier, check all four: is the task hard to specify
+    up front; does the outcome justify the cost and latency; is Claude actually
+    good at it; and can an error be caught and recovered from. A "no" anywhere
+    means stay at a simpler tier.
+
+    ## Four ways to build an agent, and the two that get confused
+
+    Two independent questions: who supplies the harness (the loop plus context
+    management), and who supplies the deployment.
+
+    | Approach | You write | Harness / deployment |
+    |---|---|---|
+    | Manual loop | the `while stop_reason == "tool_use"` loop | yours / yours |
+    | **Tool Runner** (`client.beta.messages.tool_runner`) | just the tool functions | SDK's loop / **yours** |
+    | **Managed Agents** (REST, beta) | agent config + your tool results | Anthropic's / **Anthropic's** |
+    | **Claude Agent SDK** — a *different package* | a prompt + options | Claude Code's harness / **yours** |
+
+    The Tool Runner and the Claude Agent SDK sound alike and are not:
+
+    - **Tool Runner** ships inside the ordinary API SDK (`anthropic`,
+      `@anthropic-ai/sdk`). It loops over tools *you* define. No built-in tools,
+      no filesystem, no sandbox. Its per-turn hooks are the reason to prefer it
+      over a hand-written loop: approval gates, logging, error interception,
+      result modification, retries.
+    - **Claude Agent SDK** (`claude-agent-sdk`, `@anthropic-ai/claude-agent-sdk`)
+      is Claude Code as a library — built-in Read/Write/Edit/Bash/Grep, subagents,
+      permissions, sessions. Different docs (`code.claude.com/docs/en/agent-sdk`),
+      not covered here. Do not substitute one for the other.
+
+    Only Managed Agents provides managed *deployment*. The other three leave
+    hosting to you.
+
+    ## Rules that hold regardless of language
+
+    Call Claude through the official SDK for the project's language. Use raw HTTP
+    only when the user asks for cURL/REST or the language has no SDK — and never
+    mix the two in one project.
+
+    **Never use an OpenAI-compatible shim.** If the file you are editing shows
+    non-Anthropic markers — `import openai`, `langchain_openai`, `OpenAI(`,
+    `gpt-4`, `gpt-5`, or an instruction to stay provider-neutral — stop and ask
+    whether to convert the file, rather than mixing Anthropic calls into it.
+
+    **Never guess an SDK binding.** Class names, namespaces, method signatures
+    and import paths must come from documentation, not from another language's
+    shape. Ruby/Java/Go/PHP/C# APIs in particular do not follow the cURL shape.
+    If the binding you need is not in the language skill, read the SDK's own
+    docs first. If that is unreachable, write from the documented patterns and
+    then iterate against the compiler or interpreter — for a statically typed SDK
+    a compile-fix loop converges faster than retrying a blocked fetch.
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Skill
+metadata:
+  name: claude-api-python
+  labels:
+    app.kubernetes.io/part-of: claude-api
+spec:
+  description: >-
+    Calling Claude from Python with the anthropic SDK — client setup, streaming,
+    structured output, and the @beta_tool tool runner. Load with claude-api.
+  version: "2026.08"
+  content: |
+    # Claude from Python
+
+    Package `anthropic`. Read the claude-api skill first for the model ID and
+    the current API shapes.
+
+    ```python
+    from anthropic import Anthropic
+
+    client = Anthropic()  # reads ANTHROPIC_API_KEY
+
+    message = client.messages.create(
+        model="claude-opus-5",
+        max_tokens=4096,
+        thinking={"type": "adaptive"},
+        messages=[{"role": "user", "content": "..."}],
+    )
+    print(message.content[0].text)
+    ```
+
+    **Streaming.** Use it for long input or output. `get_final_message()` gives
+    the whole response when you do not care about individual events:
+
+    ```python
+    with client.messages.stream(
+        model="claude-opus-5",
+        max_tokens=8192,
+        messages=[{"role": "user", "content": "..."}],
+    ) as stream:
+        message = stream.get_final_message()
+    ```
+
+    **Structured output.** `client.messages.parse()` validates the response
+    against your schema, rather than you parsing text and hoping.
+
+    **Tool use.** Decorate functions with `@beta_tool` and hand them to
+    `client.beta.messages.tool_runner`, which runs the request → execute → loop
+    cycle. Async is `AsyncAnthropic` throughout.
+
+    Anything beyond this — batching, the error taxonomy, token counting, per-tool
+    detail — read the SDK's own documentation rather than inferring it.
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Skill
+metadata:
+  name: claude-api-typescript
+  labels:
+    app.kubernetes.io/part-of: claude-api
+spec:
+  description: >-
+    Calling Claude from TypeScript or JavaScript with @anthropic-ai/sdk — client
+    setup, streaming, and the Zod-based tool runner. Load with claude-api.
+  version: "2026.08"
+  content: |
+    # Claude from TypeScript
+
+    Package `@anthropic-ai/sdk`. JavaScript uses the same SDK. Read the
+    claude-api skill first for the model ID and the current API shapes.
+
+    ```ts
+    import Anthropic from "@anthropic-ai/sdk"
+
+    const client = new Anthropic() // reads ANTHROPIC_API_KEY
+
+    const message = await client.messages.create({
+      model: "claude-opus-5",
+      max_tokens: 4096,
+      thinking: { type: "adaptive" },
+      messages: [{ role: "user", content: "..." }],
+    })
+    ```
+
+    Note the shape: top-level request fields are the wire names (`max_tokens`,
+    not `maxTokens`) — unlike the PHP SDK, which camelCases them.
+
+    **Streaming.** `client.messages.stream({...})`, then `.finalMessage()` for
+    the complete response.
+
+    **Tool use.** Define tools with `betaZodTool` (a Zod schema becomes the input
+    schema and the runtime validation) and pass them to
+    `client.beta.messages.toolRunner`.
+
+    Anything beyond this — batching, the error taxonomy, token counting — read the
+    SDK's own documentation rather than inferring it.
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Skill
+metadata:
+  name: claude-api-go
+  labels:
+    app.kubernetes.io/part-of: claude-api
+spec:
+  description: >-
+    Calling Claude from Go with anthropic-sdk-go — client setup and the
+    toolrunner package's BetaToolRunner. Load with claude-api.
+  version: "2026.08"
+  content: |
+    # Claude from Go
+
+    Module `github.com/anthropics/anthropic-sdk-go`. Read the claude-api skill
+    first for the model ID and the current API shapes.
+
+    The SDK wraps optional fields in `param.Opt[T]` helpers (`anthropic.F(...)`,
+    `anthropic.String(...)`) rather than taking bare values, and the agentic loop
+    lives in a separate `toolrunner` package as `BetaToolRunner` — neither shape
+    is guessable from the cURL form.
+
+    So: **read the module's own documentation before writing.** Go is a typed SDK
+    where a wrong guess is a compile error rather than a runtime surprise, which
+    means a compile-fix loop against the real package converges quickly — use
+    that instead of inferring signatures from the Python or TypeScript shape.
+
+    What carries over unchanged from claude-api: the model ID string, adaptive
+    thinking, and the requirement to stream long requests.
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Skill
+metadata:
+  name: claude-api-curl
+  labels:
+    app.kubernetes.io/part-of: claude-api
+spec:
+  description: >-
+    Calling Claude over raw HTTP — required headers, request shape, and the
+    Messages endpoint. Use for shell scripts or languages with no SDK. Load with
+    claude-api.
+  version: "2026.08"
+  content: |
+    # Claude over raw HTTP
+
+    Use this only when the user asks for cURL/REST, the project is a shell
+    project, or the language has no official SDK. Otherwise use the SDK — see
+    the language skills.
+
+    ```sh
+    curl https://api.anthropic.com/v1/messages \
+      -H "x-api-key: $ANTHROPIC_API_KEY" \
+      -H "anthropic-version: 2023-06-01" \
+      -H "content-type: application/json" \
+      -d '{
+        "model": "claude-opus-5",
+        "max_tokens": 4096,
+        "thinking": {"type": "adaptive"},
+        "messages": [{"role": "user", "content": "..."}]
+      }'
+    ```
+
+    `anthropic-version` is required; the request is rejected without it. Beta
+    features additionally need `anthropic-beta: <feature>`.
+
+    Everything is this one endpoint: tools, structured output and server-side
+    tools are fields on the request, not separate APIs. Add `"stream": true` for
+    server-sent events, which you need for long responses regardless of language.
+
+    Note that raw HTTP means no tool runner — you write the
+    request → `stop_reason: "tool_use"` → execute → append `tool_result` → repeat
+    loop yourself.
