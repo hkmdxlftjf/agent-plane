@@ -1,0 +1,202 @@
+# A non-coding assistant, deployed and reachable — the shape §14's rules make
+# possible once a workspace stops meaning "a git repository".
+#
+# Nothing here is travel-specific in the control plane's eyes. The same three
+# pieces describe a NAS assistant, a home-automation assistant, an ops
+# assistant: a persistent working directory, credentials as files, and whatever
+# the agent needs to reach declared as volumes or Tools. Swap the Tools and the
+# prompt and you have a different assistant, with no operator change.
+#
+# What each piece is doing, and why:
+#
+#   spec.workspace with no repository — the assistant remembers. Preferences,
+#     itineraries it drafted, its own conversation history under HOME, all on a
+#     volume that survives a restart. Before repository became optional this
+#     required inventing a git repo to own.
+#
+#   spec.credentialRefs — the Feishu app secret arrives as a *file*, not as an
+#     environment variable. See the warning below on what that does and does not
+#     protect.
+#
+#   spec.runtime.volumes — a ConfigMap of settings the assistant reads. Shown
+#     because it is the same field a NAS assistant uses for its share (with a
+#     persistentVolumeClaim instead), and worth seeing once.
+#
+# Prerequisites:
+#
+#   1. An Amap key (free): https://lbs.amap.com/api/webservice/create-project-and-key
+#      Replace YOUR_AMAP_KEY below. NOTE: the key rides in the MCPServer URL, so
+#      anyone who can read that resource can see it — fine for a demo key.
+#   2. kubectl apply -f config/samples/travel/amap.yaml -n <ns>   (the Tools)
+#   3. Two Secrets:
+#        kubectl create secret generic gateway-token --from-literal=token=<model key>
+#        kubectl create secret generic lark-app \
+#          --from-literal=app-id=cli_xxx --from-literal=app-secret=yyy
+#   4. kubectl apply -f config/samples/travel/travel-assistant.yaml -n <ns>
+#
+# Watch it come up:
+#
+#   kubectl get agent travel-assistant -o custom-columns=\
+#NAME:.metadata.name,PHASE:.status.phase,TREE:.status.workspaceClaim
+#
+# ---------------------------------------------------------------------------
+# The runtime image is yours to supply. This file declares *what the assistant
+# is*; it does not ship a process that runs it. Two ways to fill that in:
+#
+#   - ghcr.io/hkmdxlftjf/agent-plane-runtime, the reference runtime, in serve
+#     mode (AGENTPLANE_SERVE=1). It answers POST /api/chat, so pair it with a
+#     Trigger (§13) for an IM front end.
+#   - Dockerfile.coding-agent's image, which is opencode plus the Agent Plane
+#     plugin. Despite the name nothing in it requires a repository — it holds
+#     the Feishu connection in-process, which is why this sample declares no
+#     Trigger and passes the Lark credential to the Agent itself.
+#
+# This file assumes the second. Set runtime.image accordingly.
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Credential
+metadata:
+  name: gateway-cred
+spec:
+  secretRef:
+    name: gateway-token
+    key: token
+---
+# The Feishu app credential, as a Credential rather than an inline secretKeyRef
+# in spec.runtime.env.
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Credential
+metadata:
+  name: lark-app
+spec:
+  # The whole Secret is mounted, so both app-id and app-secret land as files
+  # under $AGENTPLANE_CREDENTIALS_PATH/lark-app/. This key is the one status
+  # reporting treats as primary.
+  secretRef:
+    name: lark-app
+    key: app-secret
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Model
+metadata:
+  name: gateway-model
+spec:
+  provider: custom
+  modelName: claude-opus-5
+  endpoint: http://44.212.73.18:3000/v1
+  credentialRef:
+    name: gateway-cred
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: PromptTemplate
+metadata:
+  name: travel-assistant-prompt
+spec:
+  system: |
+    You are a personal travel assistant. You plan trips, answer questions about
+    places, and remember what the person you are helping prefers.
+
+    Ground every recommendation in a tool result. You have Amap search for real
+    places — use it rather than recalling an attraction, a hotel or an address
+    from memory, and say so plainly when a search returns nothing useful instead
+    of filling the gap.
+
+    Your working directory persists between conversations. Keep what is worth
+    keeping there — travel preferences, itineraries you have drafted, notes on
+    trips already taken — and read it before asking something you were told
+    before. Do not write anything the person did not say.
+
+    Read /etc/assistant/preferences.yaml at the start of a conversation if it
+    exists; it holds standing preferences that outrank anything you inferred.
+---
+# Standing preferences, as configuration rather than as prompt text: editable
+# without re-rolling the Agent, and the same shape any assistant would use for
+# settings it should not have to be told twice.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: travel-preferences
+data:
+  preferences.yaml: |
+    home_city: 北京
+    hotel_style: comfort
+    pace: relaxed          # 2-3 attractions a day, not 6
+    avoid: [极限运动]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: travel-assistant
+---
+# get only, and no list/watch: the runtime resolves the Secrets its own Model
+# names. Listing would let it enumerate every Secret in the namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: travel-assistant
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: travel-assistant
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: travel-assistant
+subjects:
+  - kind: ServiceAccount
+    name: travel-assistant
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Agent
+metadata:
+  name: travel-assistant
+spec:
+  description: Personal travel assistant — plans trips, remembers preferences.
+  modelRef:
+    name: gateway-model
+  promptRef:
+    name: travel-assistant-prompt
+  # Real place data. Apply config/samples/travel/amap.yaml first.
+  toolRefs:
+    - name: amap-poi-search
+    - name: amap-around-search
+    - name: amap-weather
+  # The Feishu app credential, mounted as files under
+  # $AGENTPLANE_CREDENTIALS_PATH/lark-app/.
+  #
+  # Better than spec.runtime.env with a secretKeyRef, which is how this had to be
+  # written before: the value stays out of `kubectl describe pod`, out of the
+  # process environment, and out of any child process the agent spawns.
+  #
+  # It is NOT hidden from the model. This runtime can run shell commands, so it
+  # can read the file just as it could read an environment variable. What this
+  # buys is a smaller accidental-leak surface, not isolation from the agent. A
+  # credential the agent must never hold belongs behind an MCP server instead —
+  # see config/samples/coding/lark-mcp.yaml.
+  credentialRefs:
+    - name: lark-app
+  # A persistent working directory with no repository behind it. This is the
+  # whole point of the sample: the assistant gets a durable volume, a writable
+  # HOME on it (so conversation history survives a restart), and the container
+  # sandbox — without pretending to own a git repository.
+  workspace:
+    size: 5Gi
+  runtime:
+    # Supply your own; see the header. Dockerfile.coding-agent's image works
+    # here despite the name.
+    image: agent-plane-coding-agent:local
+    serviceAccountName: travel-assistant
+    port: 4096
+    volumes:
+      # Standing preferences. A NAS assistant would write
+      # `persistentVolumeClaim: {claimName: nas-share}` here instead and change
+      # nothing else about the shape.
+      - name: preferences
+        mountPath: /etc/assistant
+        readOnly: true
+        configMap:
+          name: travel-preferences
