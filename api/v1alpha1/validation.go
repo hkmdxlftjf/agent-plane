@@ -111,10 +111,16 @@ func (s *AgentSpec) Validate() error {
 	if dup := firstDuplicate(refNames(s.KnowledgeBaseRefs)); dup != "" {
 		return fmt.Errorf("duplicate knowledgeBaseRef %q", dup)
 	}
+	if dup := firstDuplicate(refNames(s.CredentialRefs)); dup != "" {
+		return fmt.Errorf("duplicate credentialRef %q", dup)
+	}
 	if err := s.validateWorkspace(); err != nil {
 		return err
 	}
 	if err := s.validateVolumes(); err != nil {
+		return err
+	}
+	if err := s.validateRuntimeEnv(); err != nil {
 		return err
 	}
 	if err := s.validateExpose(); err != nil {
@@ -123,8 +129,29 @@ func (s *AgentSpec) Validate() error {
 	return nil
 }
 
+// validateRuntimeEnv keeps a runtime from setting the variables the Operator
+// injects. The Operator appends them last so they win regardless — this makes
+// the conflict visible at apply time rather than as a value that was quietly
+// discarded.
+func (s *AgentSpec) validateRuntimeEnv() error {
+	if s.Runtime == nil {
+		return nil
+	}
+	reserved := make(map[string]bool, len(ReservedRuntimeEnv))
+	for _, name := range ReservedRuntimeEnv {
+		reserved[name] = true
+	}
+	for _, e := range s.Runtime.Env {
+		if reserved[e.Name] {
+			return fmt.Errorf("spec.runtime.env may not set %q: it is injected by the Operator", e.Name)
+		}
+	}
+	return nil
+}
+
 // ReservedVolumeNames are the pod volumes the Operator manages itself. An
-// Agent's own volume may not take one of these names.
+// Agent's own volume may not take one of these names, nor start with
+// ReservedVolumeNamePrefix.
 //
 // Kept as exported data rather than inline literals so a volume added to the
 // controller cannot quietly become un-reserved: TestEveryReservedVolumeIsRejected
@@ -134,7 +161,6 @@ var ReservedVolumeNames = []string{
 	"tmp",
 	"git-credential",
 	"model-credential",
-	"credentials",
 }
 
 // ReservedMountPaths are the paths the Operator mounts into a runtime
@@ -144,8 +170,19 @@ var ReservedMountPaths = []string{
 	"/tmp",
 	"/var/run/agentplane/git",
 	"/var/run/agentplane/model",
-	"/var/run/agentplane/credentials",
+	credentialsDirPath,
 }
+
+// credentialsDirPath is where spec.credentialRefs are mounted, one subdirectory
+// per Credential. It must match credentialsMountPath in internal/controller;
+// the two are separate because the API package cannot import the controller.
+const credentialsDirPath = "/var/run/agentplane/credentials"
+
+// ReservedVolumeNamePrefix is the prefix the Operator gives a volume carrying
+// one of the Agent's Credentials ("credential-" + the Credential's name). An
+// Agent volume may not start with it, since the exact names depend on which
+// Credentials are referenced and would otherwise collide as those change.
+const ReservedVolumeNamePrefix = "credential-"
 
 // validateVolumes checks the Agent's own volumes against the ones the Operator
 // manages.
@@ -181,6 +218,10 @@ func (s *AgentSpec) validateVolumes() error {
 		if reservedNames[v.Name] {
 			return fmt.Errorf("spec.runtime.volumes: %q is a volume name the Operator manages", v.Name)
 		}
+		if strings.HasPrefix(v.Name, ReservedVolumeNamePrefix) {
+			return fmt.Errorf("spec.runtime.volumes: %q uses the %q prefix, which the Operator reserves for spec.credentialRefs",
+				v.Name, ReservedVolumeNamePrefix)
+		}
 		if !strings.HasPrefix(v.MountPath, "/") {
 			return fmt.Errorf("spec.runtime.volumes: mountPath %q for volume %q must be absolute", v.MountPath, v.Name)
 		}
@@ -190,6 +231,14 @@ func (s *AgentSpec) validateVolumes() error {
 		}
 		if reservedPaths[clean] {
 			return fmt.Errorf("spec.runtime.volumes: mountPath %q for volume %q is used by the Operator", v.MountPath, v.Name)
+		}
+		// Anything under the credentials directory too, not just the directory
+		// itself: a volume at /var/run/agentplane/credentials/lark would shadow
+		// exactly one Credential and leave the rest working, which is the hardest
+		// version of this to notice.
+		if strings.HasPrefix(clean, credentialsDirPath+"/") {
+			return fmt.Errorf("spec.runtime.volumes: mountPath %q for volume %q is inside %s, which the Operator manages",
+				v.MountPath, v.Name, credentialsDirPath)
 		}
 		if seenPaths[clean] {
 			return fmt.Errorf("spec.runtime.volumes: duplicate mountPath %q", v.MountPath)
@@ -268,7 +317,28 @@ func (s *SkillSpec) Validate() error {
 const (
 	EnvAgentEndpoint  = "AGENTPLANE_AGENT_ENDPOINT"
 	EnvCredentialPath = "AGENTPLANE_CREDENTIAL_PATH"
+
+	// EnvCredentialsPath points a runtime at the directory holding its Agent's
+	// own Credentials, one subdirectory per Credential.
+	//
+	// Plural, and distinct from EnvCredentialPath above: an adapter has exactly
+	// one credential and reads its keys straight out of that directory, while an
+	// Agent may have several and needs them kept apart. One name meaning both
+	// would break whichever contract read it the other way.
+	EnvCredentialsPath = "AGENTPLANE_CREDENTIALS_PATH"
 )
+
+// ReservedRuntimeEnv are the environment variables a spec.runtime.env entry may
+// not set.
+//
+// Only the credentials directory, for now. The Operator also injects
+// AGENTPLANE_REGISTRY and the Agent's name and namespace, and those are appended
+// *before* spec.runtime.env — so an Agent can already override them, and some
+// deployment may be relying on that. Forbidding them belongs in its own change,
+// not smuggled in with this one.
+var ReservedRuntimeEnv = []string{
+	EnvCredentialsPath,
+}
 
 // ReservedTriggerEnv are the environment variables the Operator injects into an
 // adapter container. They are the adapter contract, so a Trigger may not set

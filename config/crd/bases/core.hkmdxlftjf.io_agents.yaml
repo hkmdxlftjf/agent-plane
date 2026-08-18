@@ -67,6 +67,43 @@ spec:
                 required:
                 - name
                 type: object
+              credentialRefs:
+                description: |-
+                  credentialRefs lists Credentials the runtime needs for things Agent Plane
+                  does not model — an IM app secret, a home automation token, a vendor API
+                  key. Each one's Secret is mounted as files under
+                  $AGENTPLANE_CREDENTIALS_PATH/<credential-name>/, one file per key.
+
+                  This exists because the alternative was spec.runtime.env with a
+                  secretKeyRef, and the two are not equivalent. An environment value is
+                  visible in `kubectl describe pod`, is inherited by every child process the
+                  agent spawns, and tends to end up in logs and crash dumps. A file is none
+                  of those.
+
+                  What it does NOT do is hide the value from the model. A runtime that
+                  executes model-directed shell commands can read the file, exactly as it
+                  could read the environment. Mounting narrows where the secret leaks by
+                  accident; it is not a boundary against the agent itself. An Agent that must
+                  not hold a credential should reach the capability through a Tool whose MCP
+                  server holds it instead.
+
+                  A missing Credential leaves the Agent Degraded with ReferenceNotFound, the
+                  same as any other unresolved reference.
+                items:
+                  description: |-
+                    LocalReference points at another Agent Plane resource by name, in the same
+                    namespace as the referring object. This is the primary composition primitive:
+                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                  properties:
+                    name:
+                      description: name is the metadata.name of the referenced resource.
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               description:
                 description: description is a human-readable summary of the agent's
                   purpose.

@@ -90,6 +90,30 @@ type AgentSpec struct {
 	// +listType=atomic
 	KnowledgeBaseRefs []LocalReference `json:"knowledgeBaseRefs,omitempty"`
 
+	// credentialRefs lists Credentials the runtime needs for things Agent Plane
+	// does not model — an IM app secret, a home automation token, a vendor API
+	// key. Each one's Secret is mounted as files under
+	// $AGENTPLANE_CREDENTIALS_PATH/<credential-name>/, one file per key.
+	//
+	// This exists because the alternative was spec.runtime.env with a
+	// secretKeyRef, and the two are not equivalent. An environment value is
+	// visible in `kubectl describe pod`, is inherited by every child process the
+	// agent spawns, and tends to end up in logs and crash dumps. A file is none
+	// of those.
+	//
+	// What it does NOT do is hide the value from the model. A runtime that
+	// executes model-directed shell commands can read the file, exactly as it
+	// could read the environment. Mounting narrows where the secret leaks by
+	// accident; it is not a boundary against the agent itself. An Agent that must
+	// not hold a credential should reach the capability through a Tool whose MCP
+	// server holds it instead.
+	//
+	// A missing Credential leaves the Agent Degraded with ReferenceNotFound, the
+	// same as any other unresolved reference.
+	// +optional
+	// +listType=atomic
+	CredentialRefs []LocalReference `json:"credentialRefs,omitempty"`
+
 	// runtime, when set, tells the Operator to materialize an in-cluster agent
 	// runtime Deployment for this Agent (pull model: the container reads its
 	// config from the Registry). Omit to keep Agent Plane purely declarative and

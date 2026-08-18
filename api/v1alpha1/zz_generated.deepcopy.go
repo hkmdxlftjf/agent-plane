@@ -434,6 +434,11 @@ func (in *AgentSpec) DeepCopyInto(out *AgentSpec) {
 		*out = make([]LocalReference, len(*in))
 		copy(*out, *in)
 	}
+	if in.CredentialRefs != nil {
+		in, out := &in.CredentialRefs, &out.CredentialRefs
+		*out = make([]LocalReference, len(*in))
+		copy(*out, *in)
+	}
 	if in.Runtime != nil {
 		in, out := &in.Runtime, &out.Runtime
 		*out = new(AgentRuntimeSpec)

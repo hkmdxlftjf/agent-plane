@@ -80,8 +80,44 @@ type resolution struct {
 	// skillScopes are the tool restrictions the referenced Skills declare, checked
 	// against the Agent's tool surface for coherence.
 	skillScopes []corev1alpha1.SkillToolScope
+	// credentials are the Agent's own Credentials, resolved to the Secrets the
+	// runtime pod mounts. Collected during resolution so materializing the
+	// Deployment costs no second read.
+	credentials []mountedCredential
 	// peers are the Agents this one consults through peer Tools.
 	peers []peerRef
+}
+
+// mountedCredential is one Credential the runtime gets as files: the Credential's
+// own name, which becomes the directory, and the Secret behind it.
+type mountedCredential struct {
+	name   string
+	secret string
+}
+
+// collect harvests what a resolved object contributes beyond its hash entry:
+// policy inputs, skill scopes, credential Secrets. Done while the object is in
+// hand so the checks that follow cost no extra API reads. Kinds that contribute
+// nothing fall through.
+func (res *resolution) collect(obj client.Object) {
+	switch o := obj.(type) {
+	case *corev1alpha1.Policy:
+		res.policies = append(res.policies, *o)
+	case *corev1alpha1.ToolPolicy:
+		res.toolPolicies = append(res.toolPolicies, *o)
+	case *corev1alpha1.Skill:
+		if len(o.Spec.AllowedTools) > 0 {
+			res.skillScopes = append(res.skillScopes, corev1alpha1.SkillToolScope{
+				Skill:        o.Name,
+				AllowedTools: o.Spec.AllowedTools,
+			})
+		}
+	case *corev1alpha1.Credential:
+		res.credentials = append(res.credentials, mountedCredential{
+			name:   o.Name,
+			secret: o.Spec.SecretRef.Name,
+		})
+	}
 }
 
 // peerRef is one edge in the peer graph: the Tool that declares it, and the
@@ -124,7 +160,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// Materialize the runtime workload if requested (pull model).
 	if agent.Spec.Runtime != nil {
-		if err := r.reconcileRuntime(ctx, &agent); err != nil {
+		if err := r.reconcileRuntime(ctx, &agent, res); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -271,6 +307,18 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 	for _, ref := range eff.KnowledgeBaseRefs {
 		targets = append(targets, target{"KnowledgeBase", ref.Name, &corev1alpha1.KnowledgeBase{}})
 	}
+	// Appended last, and deliberately so. The order of this slice is the order the
+	// config hash is computed over, so putting credentials at the end means an
+	// Agent that declares none hashes exactly as it did before this field existed
+	// — no spurious rollout on upgrade.
+	//
+	// Resolved here rather than in reconcileRuntime because that gets the house
+	// behaviour for free: a missing Credential lands in res.missing and the Agent
+	// goes Degraded with ReferenceNotFound, instead of failing the reconcile the
+	// way the workspace git credential does.
+	for _, ref := range agent.Spec.CredentialRefs {
+		targets = append(targets, target{kindCredential, ref.Name, &corev1alpha1.Credential{}})
+	}
 
 	// An agent with no effective model (neither its own modelRef nor a class
 	// default) cannot be assembled — surface it via the same Degraded path.
@@ -287,20 +335,7 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 				Name:            t.name,
 				ResourceVersion: t.obj.GetResourceVersion(),
 			})
-			// Collect the policy inputs while the objects are in hand.
-			switch obj := t.obj.(type) {
-			case *corev1alpha1.Policy:
-				res.policies = append(res.policies, *obj)
-			case *corev1alpha1.ToolPolicy:
-				res.toolPolicies = append(res.toolPolicies, *obj)
-			case *corev1alpha1.Skill:
-				if len(obj.Spec.AllowedTools) > 0 {
-					res.skillScopes = append(res.skillScopes, corev1alpha1.SkillToolScope{
-						Skill:        obj.Name,
-						AllowedTools: obj.Spec.AllowedTools,
-					})
-				}
-			}
+			res.collect(t.obj)
 		case apierrors.IsNotFound(getErr):
 			res.missing = append(res.missing, fmt.Sprintf("%s/%s", t.kind, t.name))
 		default:
@@ -427,6 +462,11 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			r.agentsReferencingIndexed([]string{idxAgentToolPolicies}, nil, false)).
 		Watches(&corev1alpha1.KnowledgeBase{},
 			r.agentsReferencingIndexed([]string{idxAgentKnowledge}, nil, false)).
+		// Credentials the Agent mounts itself. Until now the Agent controller
+		// watched none, so a Credential created after the Agent left it Degraded
+		// with nothing to wake it.
+		Watches(&corev1alpha1.Credential{},
+			r.agentsReferencingIndexed([]string{idxAgentCredentials}, nil, false)).
 		Watches(&corev1alpha1.AgentClass{},
 			r.agentsReferencingIndexed([]string{idxAgentClass}, nil, false)).
 		Named("agent").
@@ -743,7 +783,7 @@ fi`
 // clone init container populates a PersistentVolumeClaim, and the runtime
 // container mounts it. That is what lets a coding agent keep a checkout, its
 // branches, and its build cache across restarts.
-func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alpha1.Agent) error {
+func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alpha1.Agent, res *resolution) error {
 	rt := agent.Spec.Runtime
 	ws := agent.Spec.Workspace
 	labels := agentRuntimeLabels(agent)
@@ -859,7 +899,6 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 		if vols, mounts := userVolumes(rt.Volumes); len(vols) > 0 {
 			dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes, vols...)
 			container.VolumeMounts = append(container.VolumeMounts, mounts...)
-
 			// Mounting something worth mounting is reason enough to sandbox the
 			// container, and the argument is the one the workspace branch already
 			// makes: the runtime executes shell commands a model chose. A pod that
@@ -869,6 +908,24 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 			// Only when the workspace has not already set it, and note what is not
 			// borrowed from that branch — the single replica, which is about a
 			// ReadWriteOnce claim rather than about isolation.
+			if container.SecurityContext == nil {
+				container.SecurityContext = sandboxSecurityContext()
+			}
+		}
+
+		// The Agent's own Credentials, as files. Same treatment as the model and
+		// git credentials the Operator already mounts, extended to the ones only
+		// the Agent knows it needs — and mounted rather than set as environment
+		// for the same reason those are.
+		if vols, mounts := credentialVolumes(res.credentials); len(vols) > 0 {
+			dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes, vols...)
+			container.VolumeMounts = append(container.VolumeMounts, mounts...)
+			// Appended after rt.Env, so an Agent cannot point its own runtime at the
+			// wrong directory by setting this itself. Validation rejects that too;
+			// this makes it true regardless.
+			container.Env = append(container.Env, corev1.EnvVar{
+				Name: corev1alpha1.EnvCredentialsPath, Value: credentialsMountPath,
+			})
 			if container.SecurityContext == nil {
 				container.SecurityContext = sandboxSecurityContext()
 			}
@@ -1103,6 +1160,50 @@ func userVolumes(declared []corev1alpha1.AgentVolume) ([]corev1.Volume, []corev1
 		volumes = append(volumes, corev1.Volume{Name: v.Name, VolumeSource: src})
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: v.Name, MountPath: v.MountPath, ReadOnly: v.ReadOnly,
+		})
+	}
+	return volumes, mounts
+}
+
+// credentialsMountPath is the directory holding the Agent's own Credentials,
+// one subdirectory per Credential and one file per Secret key.
+//
+// Plural, and a different path from the Trigger's singular
+// /var/run/agentplane/credential, deliberately: an adapter has exactly one
+// credential and reads its keys directly, while an Agent may have several and
+// has to tell them apart. Sharing the path would make the same variable mean
+// "the keys" in one contract and "the credentials" in the other.
+const credentialsMountPath = "/var/run/agentplane/credentials"
+
+// credentialVolumes turns the Agent's resolved Credentials into pod volumes,
+// one per Credential, each mounted read-only at its own subdirectory.
+//
+// The whole Secret is mounted rather than the single key the Credential names,
+// matching what the Trigger does: a credential is often a set (app id and app
+// secret), and projecting one key would make the other unreachable through a
+// field that looks like it should carry it.
+//
+// The volume name is derived from the Credential's name, which is a DNS label
+// and therefore already a valid volume name; the reserved-name check at apply
+// time keeps it from colliding with the Operator's own.
+func credentialVolumes(creds []mountedCredential) ([]corev1.Volume, []corev1.VolumeMount) {
+	volumes := make([]corev1.Volume, 0, len(creds))
+	mounts := make([]corev1.VolumeMount, 0, len(creds))
+	for _, c := range creds {
+		if c.secret == "" {
+			continue // a Credential with no Secret behind it mounts nothing
+		}
+		name := "credential-" + c.name
+		volumes = append(volumes, corev1.Volume{
+			Name: name,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{SecretName: c.secret},
+			},
+		})
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      name,
+			MountPath: credentialsMountPath + "/" + c.name,
+			ReadOnly:  true,
 		})
 	}
 	return volumes, mounts

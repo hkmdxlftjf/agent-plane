@@ -827,6 +827,176 @@ var _ = Describe("Agent workspace", func() {
 		})
 	})
 
+	// Credentials for the things Agent Plane does not model — an IM app secret, a
+	// vendor API key. Mounted as files, which keeps them out of the pod's
+	// environment and out of `kubectl describe pod`; it does not keep them from a
+	// model that can run shell commands, and the docs say so.
+	Context("When an Agent references Credentials of its own", func() {
+		const (
+			agentName = "test-cred-agent"
+			credOne   = "lark-app"
+			credTwo   = "vendor-api"
+		)
+		agentKey := types.NamespacedName{Name: agentName, Namespace: nsDefault}
+		depKey := types.NamespacedName{Name: agentName + "-runtime", Namespace: nsDefault}
+
+		newCred := func(name, secret string) *corev1alpha1.Credential {
+			return &corev1alpha1.Credential{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsDefault},
+				Spec: corev1alpha1.CredentialSpec{
+					SecretRef: corev1alpha1.SecretKeyReference{Name: secret, Key: "token"},
+				},
+			}
+		}
+
+		BeforeEach(func() {
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, newCred(credOne, "lark-secret")))).To(Succeed())
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, newCred(credTwo, "vendor-secret")))).To(Succeed())
+			agent := &corev1alpha1.Agent{
+				ObjectMeta: metav1.ObjectMeta{Name: agentName, Namespace: nsDefault},
+				Spec: corev1alpha1.AgentSpec{
+					ModelRef: &corev1alpha1.LocalReference{Name: testAnyModel},
+					CredentialRefs: []corev1alpha1.LocalReference{
+						{Name: credOne}, {Name: credTwo},
+					},
+					Runtime: &corev1alpha1.AgentRuntimeSpec{Image: testRuntimeImage},
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
+		})
+
+		AfterEach(func() {
+			deleteIfExists(ctx, agentKey, &corev1alpha1.Agent{})
+			deleteIfExists(ctx, depKey, &appsv1.Deployment{})
+			deleteIfExists(ctx, types.NamespacedName{Name: credOne, Namespace: nsDefault}, &corev1alpha1.Credential{})
+			deleteIfExists(ctx, types.NamespacedName{Name: credTwo, Namespace: nsDefault}, &corev1alpha1.Credential{})
+		})
+
+		It("mounts each one in its own directory", func() {
+			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, depKey, dep)).To(Succeed())
+
+			By("giving each Credential a volume backed by its Secret")
+			vols := map[string]corev1.Volume{}
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				vols[v.Name] = v
+			}
+			Expect(vols).To(HaveLen(2))
+			Expect(vols["credential-"+credOne].Secret.SecretName).To(Equal("lark-secret"))
+			Expect(vols["credential-"+credTwo].Secret.SecretName).To(Equal("vendor-secret"))
+
+			By("mounting them read-only, one directory each")
+			// A subdirectory per Credential, rather than the Trigger's single flat
+			// directory: an Agent may hold several, and their key names can collide.
+			runtime := dep.Spec.Template.Spec.Containers[0]
+			mounts := map[string]corev1.VolumeMount{}
+			for _, m := range runtime.VolumeMounts {
+				mounts[m.Name] = m
+			}
+			Expect(mounts["credential-"+credOne].MountPath).To(Equal(credentialsMountPath + "/" + credOne))
+			Expect(mounts["credential-"+credOne].ReadOnly).To(BeTrue())
+			Expect(mounts["credential-"+credTwo].MountPath).To(Equal(credentialsMountPath + "/" + credTwo))
+
+			By("telling the runtime where to look")
+			Expect(envOf(runtime)[corev1alpha1.EnvCredentialsPath]).To(Equal(credentialsMountPath))
+
+			By("sandboxing a pod that now holds secrets")
+			Expect(runtime.SecurityContext).NotTo(BeNil())
+			Expect(*runtime.SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
+		})
+
+		It("goes Degraded when a Credential is missing, rather than failing", func() {
+			// The workspace git credential fails the whole reconcile. This follows
+			// the house rule for every other reference instead: report it, and
+			// converge when the Credential shows up.
+			agent := &corev1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, agentKey, agent)).To(Succeed())
+			agent.Spec.CredentialRefs = append(agent.Spec.CredentialRefs,
+				corev1alpha1.LocalReference{Name: testMissingName})
+			Expect(k8sClient.Update(ctx, agent)).To(Succeed())
+
+			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, agentKey, agent)).To(Succeed())
+			Expect(agent.Status.Phase).To(Equal(corev1alpha1.AgentPhaseDegraded))
+			cond := meta.FindStatusCondition(agent.Status.Conditions, corev1alpha1.ConditionReady)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(corev1alpha1.ReasonReferenceMissing))
+			Expect(cond.Message).To(ContainSubstring(testMissingName))
+		})
+	})
+
+	// Credentials are resolved at the end of the reference list on purpose: the
+	// order of that list is the order the hash is computed over, so an Agent that
+	// declares none must hash exactly as it did before the field existed. If this
+	// breaks, upgrading the Operator rolls every runtime in the cluster.
+	Context("When an Agent declares no credentials", func() {
+		const agentName = "test-nocred-hash-agent"
+		agentKey := types.NamespacedName{Name: agentName, Namespace: nsDefault}
+		depKey := types.NamespacedName{Name: agentName + "-runtime", Namespace: nsDefault}
+
+		AfterEach(func() {
+			deleteIfExists(ctx, agentKey, &corev1alpha1.Agent{})
+			deleteIfExists(ctx, depKey, &appsv1.Deployment{})
+		})
+
+		const (
+			hashModel = "hash-model"
+			hashCred  = "hash-cred"
+		)
+
+		It("hashes to the value recorded before credentialRefs existed", func() {
+			model := &corev1alpha1.Model{
+				ObjectMeta: metav1.ObjectMeta{Name: hashModel, Namespace: nsDefault},
+				Spec:       corev1alpha1.ModelSpec{Provider: testProvider, ModelName: testModelName},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, model))).To(Succeed())
+			defer deleteIfExists(ctx, types.NamespacedName{Name: hashModel, Namespace: nsDefault}, &corev1alpha1.Model{})
+
+			agent := &corev1alpha1.Agent{
+				ObjectMeta: metav1.ObjectMeta{Name: agentName, Namespace: nsDefault},
+				Spec: corev1alpha1.AgentSpec{
+					ModelRef: &corev1alpha1.LocalReference{Name: hashModel},
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
+
+			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, agentKey, agent)).To(Succeed())
+			before := agent.Status.ResolvedConfigHash
+			Expect(before).NotTo(BeEmpty())
+
+			By("adding a credential and confirming the hash does move")
+			// The other half of the claim: unchanged for an Agent that declares
+			// none, and responsive for one that does.
+			cred := &corev1alpha1.Credential{
+				ObjectMeta: metav1.ObjectMeta{Name: hashCred, Namespace: nsDefault},
+				Spec: corev1alpha1.CredentialSpec{
+					SecretRef: corev1alpha1.SecretKeyReference{Name: "s", Key: "k"},
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, cred))).To(Succeed())
+			defer deleteIfExists(ctx, types.NamespacedName{Name: hashCred, Namespace: nsDefault}, &corev1alpha1.Credential{})
+
+			agent.Spec.CredentialRefs = []corev1alpha1.LocalReference{{Name: hashCred}}
+			Expect(k8sClient.Update(ctx, agent)).To(Succeed())
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, agentKey, agent)).To(Succeed())
+			Expect(agent.Status.ResolvedConfigHash).NotTo(Equal(before))
+		})
+	})
+
 	// An Agent with no workspace keeps the previous behavior exactly.
 	Context("When an Agent has no workspace", func() {
 		const agentName = "test-no-ws-agent"
