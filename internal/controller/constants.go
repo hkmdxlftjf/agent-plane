@@ -54,6 +54,7 @@ const (
 	testAnyModel     = "any-model"
 	testMissingName  = "does-not-exist"
 	testCodingImage  = "example/coding-agent:v1"
+	testRuntimeImage = "example/runtime:v1"
 )
 
 // ownedLabels is the label set for a workload the Operator materializes:

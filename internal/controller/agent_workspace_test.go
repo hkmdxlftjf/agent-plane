@@ -33,6 +33,9 @@ import (
 	corev1alpha1 "github.com/hkmdxlftjf/agent-plane/api/v1alpha1"
 )
 
+// testRepoURL is the stand-in repository every workspace fixture clones from.
+const testRepoURL = "https://github.com/org/api"
+
 // repoAgent builds an Agent bound to a repository, which is the shape a coding
 // agent (Claude Code, Codex, OpenCode) runs in: one pod, one working tree.
 func repoAgent(name, repo string, mutate func(*corev1alpha1.Agent)) *corev1alpha1.Agent {
@@ -72,7 +75,7 @@ var _ = Describe("Agent workspace", func() {
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, model))).To(Succeed())
 
-			agent := repoAgent(agentName, "https://github.com/org/api", func(a *corev1alpha1.Agent) {
+			agent := repoAgent(agentName, testRepoURL, func(a *corev1alpha1.Agent) {
 				a.Spec.ModelRef = &corev1alpha1.LocalReference{Name: modelName}
 				a.Spec.Workspace.Branch = "main"
 				a.Spec.Workspace.Size = "20Gi"
@@ -105,7 +108,7 @@ var _ = Describe("Agent workspace", func() {
 			Expect(dep.Spec.Template.Spec.InitContainers).To(HaveLen(1))
 			clone := dep.Spec.Template.Spec.InitContainers[0]
 			Expect(clone.Name).To(Equal("clone"))
-			Expect(envOf(clone)["AGENTPLANE_REPOSITORY"]).To(Equal("https://github.com/org/api"))
+			Expect(envOf(clone)["AGENTPLANE_REPOSITORY"]).To(Equal(testRepoURL))
 			Expect(envOf(clone)["AGENTPLANE_BRANCH"]).To(Equal("main"))
 			Expect(clone.VolumeMounts).To(HaveLen(1))
 			Expect(clone.VolumeMounts[0].MountPath).To(Equal("/workspace"))
@@ -404,7 +407,7 @@ var _ = Describe("Agent workspace", func() {
 
 			var fromSecret string
 			for _, v := range dep.Spec.Template.Spec.Volumes {
-				if v.Name == "model-credential" && v.Secret != nil {
+				if v.Name == modelCredentialVolumeName && v.Secret != nil {
 					fromSecret = v.Secret.SecretName
 				}
 			}
@@ -465,7 +468,7 @@ var _ = Describe("Agent workspace", func() {
 				Spec: corev1alpha1.AgentSpec{
 					ModelRef: &corev1alpha1.LocalReference{Name: testAnyModel},
 					Runtime: &corev1alpha1.AgentRuntimeSpec{
-						Image:            "example/runtime:v1",
+						Image:            testRuntimeImage,
 						Port:             4096,
 						RuntimeClassName: "gvisor",
 						ReadinessProbe: &corev1.Probe{
@@ -621,7 +624,7 @@ var _ = Describe("Agent workspace", func() {
 			Expect(envOf(runtime)).NotTo(HaveKey("GIT_CONFIG_KEY_0"))
 			Expect(envOf(runtime)).NotTo(HaveKey("AGENTPLANE_GIT_CREDENTIAL_FILE"))
 			for _, v := range dep.Spec.Template.Spec.Volumes {
-				Expect(v.Name).NotTo(Equal("git-credential"))
+				Expect(v.Name).NotTo(Equal(gitCredentialVolumeName))
 			}
 
 			By("giving it the durable HOME and the sandbox regardless")
@@ -637,6 +640,193 @@ var _ = Describe("Agent workspace", func() {
 		})
 	})
 
+	// Reaching a NAS share, a ConfigMap of settings or a scratch disk is the same
+	// need whatever the Agent is for, so it is a field rather than a new kind per
+	// storage type — and it must work for an Agent that has no workspace at all,
+	// which is where every volume used to be assembled.
+	Context("When an Agent mounts volumes of its own", func() {
+		const agentName = "test-vol-agent"
+		agentKey := types.NamespacedName{Name: agentName, Namespace: nsDefault}
+		depKey := types.NamespacedName{Name: agentName + "-runtime", Namespace: nsDefault}
+
+		BeforeEach(func() {
+			agent := &corev1alpha1.Agent{
+				ObjectMeta: metav1.ObjectMeta{Name: agentName, Namespace: nsDefault},
+				Spec: corev1alpha1.AgentSpec{
+					ModelRef: &corev1alpha1.LocalReference{Name: testAnyModel},
+					Runtime: &corev1alpha1.AgentRuntimeSpec{
+						Image:    "example/assistant:v1",
+						Replicas: 3,
+						Volumes: []corev1alpha1.AgentVolume{
+							{
+								Name: "nas", MountPath: "/mnt/nas", ReadOnly: true,
+								PersistentVolumeClaim: &corev1alpha1.AgentPVCVolumeSource{
+									ClaimName: "nas-share",
+								},
+							},
+							{
+								Name: "settings", MountPath: "/etc/assistant",
+								ConfigMap: &corev1alpha1.AgentObjectVolumeSource{Name: "assistant-config"},
+							},
+							{
+								Name: "scratch", MountPath: "/scratch",
+								EmptyDir: &corev1alpha1.AgentEmptyDirVolumeSource{},
+							},
+						},
+					},
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
+		})
+
+		AfterEach(func() {
+			deleteIfExists(ctx, agentKey, &corev1alpha1.Agent{})
+			deleteIfExists(ctx, depKey, &appsv1.Deployment{})
+		})
+
+		It("mounts them and sandboxes the pod, without pinning it to one replica", func() {
+			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, depKey, dep)).To(Succeed())
+
+			By("declaring each volume with the source it asked for")
+			vols := map[string]corev1.Volume{}
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				vols[v.Name] = v
+			}
+			Expect(vols).To(HaveLen(3))
+			Expect(vols["nas"].PersistentVolumeClaim.ClaimName).To(Equal("nas-share"))
+			Expect(vols["nas"].PersistentVolumeClaim.ReadOnly).To(BeTrue())
+			Expect(vols["settings"].ConfigMap.Name).To(Equal("assistant-config"))
+			Expect(vols["scratch"].EmptyDir).NotTo(BeNil())
+
+			By("mounting them where they were asked for")
+			mounts := map[string]corev1.VolumeMount{}
+			for _, m := range dep.Spec.Template.Spec.Containers[0].VolumeMounts {
+				mounts[m.Name] = m
+			}
+			Expect(mounts).To(HaveLen(3))
+			Expect(mounts["nas"].MountPath).To(Equal("/mnt/nas"))
+			Expect(mounts["nas"].ReadOnly).To(BeTrue())
+			Expect(mounts["settings"].ReadOnly).To(BeFalse())
+
+			By("sandboxing the container, for the same reason a workspace one is")
+			// This runtime can reach a NAS share and runs commands a model chose.
+			// Whether it also holds a git checkout is beside the point.
+			sc := dep.Spec.Template.Spec.Containers[0].SecurityContext
+			Expect(sc).NotTo(BeNil())
+			Expect(*sc.ReadOnlyRootFilesystem).To(BeTrue())
+			Expect(*sc.RunAsNonRoot).To(BeTrue())
+			Expect(sc.Capabilities.Drop).To(ConsistOf(corev1.Capability("ALL")))
+
+			By("leaving the replica count alone")
+			// The single writer rule comes from the Operator's ReadWriteOnce claim
+			// for a workspace, not from mounting volumes. Borrowing it here would
+			// silently cap an Agent whose own volumes are read-only or RWX.
+			Expect(*dep.Spec.Replicas).To(Equal(int32(3)))
+			Expect(dep.Spec.Strategy.Type).NotTo(Equal(appsv1.RecreateDeploymentStrategyType))
+
+			By("adding no init container, since there is no working directory")
+			Expect(dep.Spec.Template.Spec.InitContainers).To(BeEmpty())
+		})
+	})
+
+	// The two paths meet here: the Operator's volumes and the Agent's, in one pod.
+	Context("When an Agent has both a workspace and volumes of its own", func() {
+		const agentName = "test-ws-vol-agent"
+		agentKey := types.NamespacedName{Name: agentName, Namespace: nsDefault}
+		depKey := types.NamespacedName{Name: agentName + "-runtime", Namespace: nsDefault}
+		pvcKey := types.NamespacedName{Name: agentName + "-workspace", Namespace: nsDefault}
+
+		BeforeEach(func() {
+			agent := repoAgent(agentName, testRepoURL, func(a *corev1alpha1.Agent) {
+				a.Spec.Runtime.Volumes = []corev1alpha1.AgentVolume{{
+					Name: "nas", MountPath: "/mnt/nas",
+					PersistentVolumeClaim: &corev1alpha1.AgentPVCVolumeSource{ClaimName: "nas-share"},
+				}}
+			})
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
+		})
+
+		AfterEach(func() {
+			deleteIfExists(ctx, agentKey, &corev1alpha1.Agent{})
+			deleteIfExists(ctx, depKey, &appsv1.Deployment{})
+			deleteIfExists(ctx, pvcKey, &corev1.PersistentVolumeClaim{})
+		})
+
+		It("keeps the workspace wiring first and appends its own", func() {
+			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, depKey, dep)).To(Succeed())
+
+			By("leaving the Operator's own volumes in their original positions")
+			// Appended, not merged: a workspace runtime's wiring is unchanged by the
+			// presence of an Agent volume, which is what keeps this feature from
+			// rolling every existing coding agent.
+			vols := dep.Spec.Template.Spec.Volumes
+			Expect(vols[0].Name).To(Equal(workspaceVolumeName))
+			Expect(vols[1].Name).To(Equal("tmp"))
+			Expect(vols[len(vols)-1].Name).To(Equal("nas"))
+
+			mounts := dep.Spec.Template.Spec.Containers[0].VolumeMounts
+			Expect(mounts[0].Name).To(Equal(workspaceVolumeName))
+			Expect(mounts[len(mounts)-1].MountPath).To(Equal("/mnt/nas"))
+
+			By("still pinning to one writer, because the workspace claim is RWO")
+			Expect(*dep.Spec.Replicas).To(Equal(int32(1)))
+			Expect(dep.Spec.Strategy.Type).To(Equal(appsv1.RecreateDeploymentStrategyType))
+		})
+	})
+
+	// A volume with two sources, or none, is refused by the API server rather
+	// than by the Operator. Asserted against a real apiserver because a CEL rule
+	// that is subtly wrong does not fail loudly — it admits everything, and the
+	// Operator would then build a volume from whichever source it checked first.
+	Context("When a volume declares the wrong number of sources", func() {
+		const agentName = "test-badvol-agent"
+		agentKey := types.NamespacedName{Name: agentName, Namespace: nsDefault}
+
+		AfterEach(func() {
+			deleteIfExists(ctx, agentKey, &corev1alpha1.Agent{})
+		})
+
+		withVolume := func(v corev1alpha1.AgentVolume) *corev1alpha1.Agent {
+			return &corev1alpha1.Agent{
+				ObjectMeta: metav1.ObjectMeta{Name: agentName, Namespace: nsDefault},
+				Spec: corev1alpha1.AgentSpec{
+					ModelRef: &corev1alpha1.LocalReference{Name: testAnyModel},
+					Runtime: &corev1alpha1.AgentRuntimeSpec{
+						Image: "example/assistant:v1", Volumes: []corev1alpha1.AgentVolume{v},
+					},
+				},
+			}
+		}
+
+		It("refuses two sources", func() {
+			err := k8sClient.Create(ctx, withVolume(corev1alpha1.AgentVolume{
+				Name: "both", MountPath: "/mnt/both",
+				EmptyDir:              &corev1alpha1.AgentEmptyDirVolumeSource{},
+				PersistentVolumeClaim: &corev1alpha1.AgentPVCVolumeSource{ClaimName: "c"},
+			}))
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("exactly one of"))
+		})
+
+		It("refuses none", func() {
+			err := k8sClient.Create(ctx, withVolume(corev1alpha1.AgentVolume{
+				Name: "empty", MountPath: "/mnt/empty",
+			}))
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("exactly one of"))
+		})
+	})
+
 	// An Agent with no workspace keeps the previous behavior exactly.
 	Context("When an Agent has no workspace", func() {
 		const agentName = "test-no-ws-agent"
@@ -648,7 +838,7 @@ var _ = Describe("Agent workspace", func() {
 				ObjectMeta: metav1.ObjectMeta{Name: agentName, Namespace: nsDefault},
 				Spec: corev1alpha1.AgentSpec{
 					ModelRef: &corev1alpha1.LocalReference{Name: testAnyModel},
-					Runtime:  &corev1alpha1.AgentRuntimeSpec{Image: "example/runtime:v1", Replicas: 2},
+					Runtime:  &corev1alpha1.AgentRuntimeSpec{Image: testRuntimeImage, Replicas: 2},
 				},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
@@ -773,7 +963,7 @@ var _ = Describe("Agent peering", func() {
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, tool))).To(Succeed())
 
-			caller := repoAgent(callerName, "https://github.com/org/api", func(a *corev1alpha1.Agent) {
+			caller := repoAgent(callerName, testRepoURL, func(a *corev1alpha1.Agent) {
 				a.Spec.ModelRef = &corev1alpha1.LocalReference{Name: peerModel}
 				a.Spec.ToolRefs = []corev1alpha1.LocalReference{{Name: toolName}}
 			})

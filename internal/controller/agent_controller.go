@@ -433,8 +433,20 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// workspaceVolumeName is the volume carrying the Agent's working tree.
-const workspaceVolumeName = "workspace"
+// The pod volumes the Operator manages. Every one of these is reserved against
+// an Agent's own spec.runtime.volumes — see ReservedVolumeNames in the API
+// package, which is what enforces it, and the test that walks that list.
+const (
+	// workspaceVolumeName is the volume carrying the Agent's working directory.
+	workspaceVolumeName = "workspace"
+	// tmpVolumeName is scratch space, needed because the root filesystem of a
+	// sandboxed runtime is read-only.
+	tmpVolumeName = "tmp"
+	// gitCredentialVolumeName carries the workspace Credential's Secret.
+	gitCredentialVolumeName = "git-credential"
+	// modelCredentialVolumeName carries the Model Credential's Secret.
+	modelCredentialVolumeName = "model-credential"
+)
 
 // gitCredentialMountPath is where a workspace Credential's Secret is mounted in
 // the clone step. As elsewhere, the value is mounted rather than passed as
@@ -706,7 +718,7 @@ fi`
 			Value: gitCredentialMountPath + "/token",
 		})
 		mounts = append(mounts, corev1.VolumeMount{
-			Name:      "git-credential",
+			Name:      gitCredentialVolumeName,
 			MountPath: gitCredentialMountPath,
 			ReadOnly:  true,
 		})
@@ -822,6 +834,11 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 			// new pod before the old one exits, so two agents would edit the same
 			// checkout — and with ReadWriteOnce the new pod would simply fail to
 			// schedule. Recreate at one replica is the only correct combination.
+			//
+			// Scoped to the workspace deliberately: it follows from the Operator's
+			// ReadWriteOnce claim, not from mounting volumes in general. An Agent
+			// whose own volumes are read-only or ReadWriteMany can run as many
+			// replicas as it asked for.
 			one := int32(1)
 			dep.Spec.Replicas = &one
 			dep.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
@@ -832,6 +849,28 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 			}
 			dep.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
 				FSGroup: int64Ptr(workspaceFSGroup),
+			}
+		}
+
+		// The Agent's own volumes, appended after the Operator's so a workspace
+		// runtime keeps the exact wiring it had. Their names and paths are checked
+		// against the reserved ones at apply time, so nothing here can shadow the
+		// working directory or a mounted credential.
+		if vols, mounts := userVolumes(rt.Volumes); len(vols) > 0 {
+			dep.Spec.Template.Spec.Volumes = append(dep.Spec.Template.Spec.Volumes, vols...)
+			container.VolumeMounts = append(container.VolumeMounts, mounts...)
+
+			// Mounting something worth mounting is reason enough to sandbox the
+			// container, and the argument is the one the workspace branch already
+			// makes: the runtime executes shell commands a model chose. A pod that
+			// can reach a NAS share should not also be able to write its own root
+			// filesystem or escalate privileges.
+			//
+			// Only when the workspace has not already set it, and note what is not
+			// borrowed from that branch — the single replica, which is about a
+			// ReadWriteOnce claim rather than about isolation.
+			if container.SecurityContext == nil {
+				container.SecurityContext = sandboxSecurityContext()
 			}
 		}
 
@@ -934,7 +973,7 @@ func workspacePodSpec(agent *corev1alpha1.Agent, gitSecret, modelSecret string) 
 				},
 			},
 		},
-		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: tmpVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: workspaceVolumeName, MountPath: mount},
@@ -942,7 +981,7 @@ func workspacePodSpec(agent *corev1alpha1.Agent, gitSecret, modelSecret string) 
 		// container's SecurityContext below locks the root filesystem read-only,
 		// so anything a build or editor writes outside the working tree (caches,
 		// temp files) needs somewhere to land.
-		{Name: "tmp", MountPath: "/tmp"},
+		{Name: tmpVolumeName, MountPath: "/tmp"},
 	}
 
 	if gitSecret != "" {
@@ -956,26 +995,26 @@ func workspacePodSpec(agent *corev1alpha1.Agent, gitSecret, modelSecret string) 
 			corev1.EnvVar{Name: "GIT_CONFIG_VALUE_1", Value: gitCredentialHelper},
 		)
 		volumes = append(volumes, corev1.Volume{
-			Name: "git-credential",
+			Name: gitCredentialVolumeName,
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{SecretName: gitSecret},
 			},
 		})
 		mounts = append(mounts, corev1.VolumeMount{
-			Name:      "git-credential",
+			Name:      gitCredentialVolumeName,
 			MountPath: gitCredentialMountPath,
 			ReadOnly:  true,
 		})
 	}
 	if modelSecret != "" {
 		volumes = append(volumes, corev1.Volume{
-			Name: "model-credential",
+			Name: modelCredentialVolumeName,
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{SecretName: modelSecret},
 			},
 		})
 		mounts = append(mounts, corev1.VolumeMount{
-			Name:      "model-credential",
+			Name:      modelCredentialVolumeName,
 			MountPath: modelCredentialMountPath,
 			ReadOnly:  true,
 		})
@@ -1018,19 +1057,72 @@ func workspacePodSpec(agent *corev1alpha1.Agent, gitSecret, modelSecret string) 
 		mounts:  mounts,
 		env:     env,
 		// A workspace-bound runtime executes model-directed shell commands against
-		// a real checkout, so it gets the same isolation a build sandbox would:
-		// no root, no added Linux capabilities, no privilege escalation, the
-		// default seccomp profile, and a read-only root filesystem — the working
-		// tree and /tmp are the only writable paths. This is enforced by the
-		// container runtime, not by the agent's own tool code, so it holds even
-		// if a tool implementation has a bug.
-		securityContext: &corev1.SecurityContext{
-			AllowPrivilegeEscalation: boolPtr(false),
-			ReadOnlyRootFilesystem:   boolPtr(true),
-			RunAsNonRoot:             boolPtr(true),
-			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-		},
+		// a real working directory, so it gets the same isolation a build sandbox
+		// would. Shared with the Agent-volumes path so the two cannot drift.
+		securityContext: sandboxSecurityContext(),
+	}
+}
+
+// userVolumes converts the Agent's declared volumes into the pod's two lists.
+//
+// The whitelist is enforced by the CRD (exactly one source, and hostPath is not
+// among them), so an unrecognized entry here means the API grew a source this
+// function was not taught about. Skipping it silently would produce a mount with
+// no volume behind it, which kubelet rejects with an error naming the volume but
+// not the reason — so an entry that matches nothing contributes neither, and the
+// two lists stay consistent.
+func userVolumes(declared []corev1alpha1.AgentVolume) ([]corev1.Volume, []corev1.VolumeMount) {
+	volumes := make([]corev1.Volume, 0, len(declared))
+	mounts := make([]corev1.VolumeMount, 0, len(declared))
+	for _, v := range declared {
+		var src corev1.VolumeSource
+		switch {
+		case v.PersistentVolumeClaim != nil:
+			src.PersistentVolumeClaim = &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: v.PersistentVolumeClaim.ClaimName,
+				ReadOnly:  v.ReadOnly,
+			}
+		case v.ConfigMap != nil:
+			src.ConfigMap = &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: v.ConfigMap.Name},
+				Optional:             v.ConfigMap.Optional,
+			}
+		case v.Secret != nil:
+			src.Secret = &corev1.SecretVolumeSource{
+				SecretName: v.Secret.Name,
+				Optional:   v.Secret.Optional,
+			}
+		case v.EmptyDir != nil:
+			src.EmptyDir = &corev1.EmptyDirVolumeSource{
+				Medium:    v.EmptyDir.Medium,
+				SizeLimit: v.EmptyDir.SizeLimit,
+			}
+		default:
+			continue
+		}
+		volumes = append(volumes, corev1.Volume{Name: v.Name, VolumeSource: src})
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: v.Name, MountPath: v.MountPath, ReadOnly: v.ReadOnly,
+		})
+	}
+	return volumes, mounts
+}
+
+// sandboxSecurityContext is the isolation applied to a runtime that has been
+// given something to reach: a working directory, or volumes of its own.
+//
+// No root, no added Linux capabilities, no privilege escalation, the default
+// seccomp profile, and a read-only root filesystem — the mounted paths are the
+// only writable ones. This is enforced by the container runtime, not by the
+// agent's own tool code, so it holds even if a tool implementation has a bug,
+// which matters because the commands that tool code runs were chosen by a model.
+func sandboxSecurityContext() *corev1.SecurityContext {
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: boolPtr(false),
+		ReadOnlyRootFilesystem:   boolPtr(true),
+		RunAsNonRoot:             boolPtr(true),
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 	}
 }
 

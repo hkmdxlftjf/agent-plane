@@ -56,7 +56,7 @@ func servedAgent(name string, port int32) *corev1alpha1.Agent {
 		Spec: corev1alpha1.AgentSpec{
 			ModelRef: &corev1alpha1.LocalReference{Name: testAnyModel},
 			Runtime: &corev1alpha1.AgentRuntimeSpec{
-				Image: "example/runtime:v1",
+				Image: testRuntimeImage,
 				Port:  port,
 			},
 		},

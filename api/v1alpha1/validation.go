@@ -114,8 +114,87 @@ func (s *AgentSpec) Validate() error {
 	if err := s.validateWorkspace(); err != nil {
 		return err
 	}
+	if err := s.validateVolumes(); err != nil {
+		return err
+	}
 	if err := s.validateExpose(); err != nil {
 		return err
+	}
+	return nil
+}
+
+// ReservedVolumeNames are the pod volumes the Operator manages itself. An
+// Agent's own volume may not take one of these names.
+//
+// Kept as exported data rather than inline literals so a volume added to the
+// controller cannot quietly become un-reserved: TestEveryReservedVolumeIsRejected
+// walks this list.
+var ReservedVolumeNames = []string{
+	"workspace",
+	"tmp",
+	"git-credential",
+	"model-credential",
+	"credentials",
+}
+
+// ReservedMountPaths are the paths the Operator mounts into a runtime
+// container. spec.workspace.mountPath is reserved too, but it is configurable,
+// so validateVolumes adds it separately.
+var ReservedMountPaths = []string{
+	"/tmp",
+	"/var/run/agentplane/git",
+	"/var/run/agentplane/model",
+	"/var/run/agentplane/credentials",
+}
+
+// validateVolumes checks the Agent's own volumes against the ones the Operator
+// manages.
+//
+// Rejected at apply time rather than resolved by letting one side win. A user
+// volume that shadows the working directory or a mounted credential does not
+// fail as a name collision — it fails as an agent whose checkout is empty, or
+// whose token is the wrong file, several layers away from the declaration that
+// caused it.
+func (s *AgentSpec) validateVolumes() error {
+	if s.Runtime == nil || len(s.Runtime.Volumes) == 0 {
+		return nil
+	}
+
+	reservedNames := make(map[string]bool, len(ReservedVolumeNames))
+	for _, n := range ReservedVolumeNames {
+		reservedNames[n] = true
+	}
+	reservedPaths := make(map[string]bool, len(ReservedMountPaths)+1)
+	for _, p := range ReservedMountPaths {
+		reservedPaths[p] = true
+	}
+	if s.Workspace != nil {
+		mount := s.Workspace.MountPath
+		if mount == "" {
+			mount = "/workspace"
+		}
+		reservedPaths[mount] = true
+	}
+
+	seenPaths := make(map[string]bool, len(s.Runtime.Volumes))
+	for _, v := range s.Runtime.Volumes {
+		if reservedNames[v.Name] {
+			return fmt.Errorf("spec.runtime.volumes: %q is a volume name the Operator manages", v.Name)
+		}
+		if !strings.HasPrefix(v.MountPath, "/") {
+			return fmt.Errorf("spec.runtime.volumes: mountPath %q for volume %q must be absolute", v.MountPath, v.Name)
+		}
+		clean := strings.TrimRight(v.MountPath, "/")
+		if clean == "" {
+			clean = "/"
+		}
+		if reservedPaths[clean] {
+			return fmt.Errorf("spec.runtime.volumes: mountPath %q for volume %q is used by the Operator", v.MountPath, v.Name)
+		}
+		if seenPaths[clean] {
+			return fmt.Errorf("spec.runtime.volumes: duplicate mountPath %q", v.MountPath)
+		}
+		seenPaths[clean] = true
 	}
 	return nil
 }
