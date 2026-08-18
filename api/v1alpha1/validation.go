@@ -120,16 +120,30 @@ func (s *AgentSpec) Validate() error {
 	return nil
 }
 
-// validateWorkspace checks the repository binding. A workspace needs somewhere
-// to live, so it depends on spec.runtime — the Operator mounts the working tree
-// into the runtime pod, and without one there is no pod to mount it into.
+// validateWorkspace checks the persistent working directory. A workspace needs
+// somewhere to live, so it depends on spec.runtime — the Operator mounts the
+// directory into the runtime pod, and without one there is no pod to mount it
+// into.
 func (s *AgentSpec) validateWorkspace() error {
 	ws := s.Workspace
 	if ws == nil {
 		return nil
 	}
 	if s.Runtime == nil {
-		return fmt.Errorf("spec.workspace requires spec.runtime: the working tree is mounted into the runtime pod")
+		return fmt.Errorf("spec.workspace requires spec.runtime: the working directory is mounted into the runtime pod")
+	}
+	// A repository is optional — a workspace is a persistent working directory,
+	// and git is one way to populate it. But the two fields that only describe a
+	// clone are not: left alone they would be silently inert, and "I set the
+	// branch and it checked out something else" is a much worse way to learn that
+	// than being told at apply time.
+	if ws.Repository == "" {
+		if ws.Branch != "" {
+			return fmt.Errorf("spec.workspace.branch needs spec.workspace.repository: there is nothing to check out")
+		}
+		if ws.CredentialRef != nil {
+			return fmt.Errorf("spec.workspace.credentialRef needs spec.workspace.repository: there is nothing to authenticate against")
+		}
 	}
 	if ws.MountPath != "" && !strings.HasPrefix(ws.MountPath, "/") {
 		return fmt.Errorf("spec.workspace.mountPath %q must be absolute", ws.MountPath)

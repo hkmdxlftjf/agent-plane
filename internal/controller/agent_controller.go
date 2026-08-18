@@ -603,20 +603,34 @@ func workspaceMountPath(ws *corev1alpha1.AgentWorkspaceSpec) string {
 	return defaultWorkspaceMountPath
 }
 
-// cloneInitContainer builds the step that populates the working tree before the
-// runtime starts.
+// cloneInitContainer builds the step that prepares the working directory before
+// the runtime starts.
 //
-// It is idempotent by design: an existing clone is fetched and reset rather than
-// re-cloned, so a pod restart resumes on the same tree instead of discarding
-// work. The credential is mounted read-only and consumed by a credential helper,
-// never interpolated into the remote URL — a URL-embedded token leaks into
-// `git remote -v`, the reflog, and any error message git prints.
+// Two jobs, and only the first is unconditional: it creates the runtime's HOME
+// on the volume with permissions a non-root container can use, and — when the
+// Agent names a repository — populates the directory from git.
+//
+// The clone half is idempotent by design: an existing checkout is fetched and
+// reset rather than re-cloned, so a pod restart resumes on the same tree instead
+// of discarding work. The credential is mounted read-only and consumed by a
+// credential helper, never interpolated into the remote URL — a URL-embedded
+// token leaks into `git remote -v`, the reflog, and any error message git prints.
+//
+// It runs even for a workspace with no repository, where it does nothing but
+// prepare HOME. That looks like a lot of container for one mkdir, and the
+// alternative — skipping the step, or pulling a smaller image for it — was
+// rejected on both counts: the runtime container cannot create the directory
+// itself (see the chmod note in the script), and a second base image is another
+// thing to pull and another thing to fail, for an image the cluster running
+// coding agents already has.
 func cloneInitContainer(agent *corev1alpha1.Agent, hasCredential bool) corev1.Container {
 	ws := agent.Spec.Workspace
 	mount := workspaceMountPath(ws)
 
-	script := `set -eu
-REPO="$AGENTPLANE_REPOSITORY"
+	// Populating from git is conditional; preparing the directory is not. Kept as
+	// two pieces of one script so the ordering is obvious: HOME is created after
+	// the clone, because `git clone` insists on an empty target directory.
+	clone := `REPO="$AGENTPLANE_REPOSITORY"
 DIR="$AGENTPLANE_WORKSPACE"
 if [ -n "${AGENTPLANE_GIT_CREDENTIAL_FILE:-}" ] && [ -f "$AGENTPLANE_GIT_CREDENTIAL_FILE" ]; then
   # Feed the token to git without putting it in the URL or the environment.
@@ -639,7 +653,15 @@ else
     git clone "$REPO" "$DIR"
   fi
 fi
-# The runtime's HOME lives on this volume (see agentHomeDirName): create it here,
+`
+	if ws.Repository == "" {
+		clone = `DIR="$AGENTPLANE_WORKSPACE"
+echo "no repository declared; preparing an empty working directory"
+`
+	}
+
+	script := `set -eu
+` + clone + `# The runtime's HOME lives on this volume (see agentHomeDirName): create it here,
 # while we are still root, and tell git to ignore it. Without the exclude a
 # coding agent would see its own state directory as untracked files in the
 # repository it is working on — and could commit them.
@@ -666,9 +688,13 @@ if [ -d "$DIR/.git" ]; then
   done
 fi`
 
-	env := []corev1.EnvVar{
-		{Name: "AGENTPLANE_REPOSITORY", Value: ws.Repository},
-		{Name: "AGENTPLANE_WORKSPACE", Value: mount},
+	env := []corev1.EnvVar{{Name: "AGENTPLANE_WORKSPACE", Value: mount}}
+	if ws.Repository != "" {
+		// Prepended so the variable order matches what a repository-bound Agent
+		// produced before workspaces could exist without one.
+		env = append([]corev1.EnvVar{
+			{Name: "AGENTPLANE_REPOSITORY", Value: ws.Repository},
+		}, env...)
 	}
 	if ws.Branch != "" {
 		env = append(env, corev1.EnvVar{Name: "AGENTPLANE_BRANCH", Value: ws.Branch})
@@ -718,8 +744,13 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 	// Resolve the git credential to a Secret name before touching the Deployment,
 	// so a missing Credential surfaces as a reconcile error rather than a pod
 	// that crash-loops on an absent volume.
+	//
+	// Gated on the repository too, not just the credentialRef: a credential with
+	// no repository to authenticate against has nothing to do, and validation
+	// rejects that combination anyway. Reading it here would mount a Secret into
+	// a pod that never makes a git request.
 	gitSecret := ""
-	if ws != nil && ws.CredentialRef != nil {
+	if ws != nil && ws.Repository != "" && ws.CredentialRef != nil {
 		var cred corev1alpha1.Credential
 		if err := r.Get(ctx, types.NamespacedName{Namespace: agent.Namespace, Name: ws.CredentialRef.Name}, &cred); err != nil {
 			return fmt.Errorf("resolve workspace credential %q: %w", ws.CredentialRef.Name, err)
@@ -879,10 +910,19 @@ func workspacePodSpec(agent *corev1alpha1.Agent, gitSecret, modelSecret string) 
 	// a different user — "detected dubious ownership"). Writing ~/.gitconfig
 	// would need that uid's home directory to exist and be writable; this
 	// does not.
-	gitConfigCount := 1
-	gitConfigEnv := []corev1.EnvVar{
-		{Name: "GIT_CONFIG_KEY_0", Value: "safe.directory"},
-		{Name: "GIT_CONFIG_VALUE_0", Value: mount},
+	//
+	// Only for a workspace populated from git. A working directory with no
+	// checkout in it has no ownership for git to object to, and configuring git
+	// for an agent that was never given a repository states a relationship that
+	// does not exist.
+	gitConfigCount := 0
+	var gitConfigEnv []corev1.EnvVar
+	if ws.Repository != "" {
+		gitConfigCount = 1
+		gitConfigEnv = []corev1.EnvVar{
+			{Name: "GIT_CONFIG_KEY_0", Value: "safe.directory"},
+			{Name: "GIT_CONFIG_VALUE_0", Value: mount},
+		}
 	}
 
 	volumes := []corev1.Volume{
@@ -955,7 +995,11 @@ func workspacePodSpec(agent *corev1alpha1.Agent, gitSecret, modelSecret string) 
 		{Name: "XDG_DATA_HOME", Value: home + "/share"},
 		{Name: "XDG_STATE_HOME", Value: home + "/state"},
 		{Name: "XDG_CACHE_HOME", Value: home + "/cache"},
-		{Name: "GIT_CONFIG_COUNT", Value: strconv.Itoa(gitConfigCount)},
+	}
+	if gitConfigCount > 0 {
+		env = append(env, corev1.EnvVar{
+			Name: "GIT_CONFIG_COUNT", Value: strconv.Itoa(gitConfigCount),
+		})
 	}
 	// Only when the credential is actually mounted. Pointing at a path that
 	// does not exist is worse than saying nothing: the credential helper

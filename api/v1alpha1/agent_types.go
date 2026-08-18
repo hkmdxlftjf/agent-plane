@@ -96,16 +96,23 @@ type AgentSpec struct {
 	// +optional
 	Runtime *AgentRuntimeSpec `json:"runtime,omitempty"`
 
-	// workspace binds this Agent to one source repository. The Operator clones it
-	// into a persistent volume the runtime pod mounts, so a coding agent
-	// (Claude Code, Codex, OpenCode, …) has a working tree that survives
-	// restarts.
+	// workspace gives this Agent a persistent working directory: a volume the
+	// Operator provisions and the runtime pod mounts, so whatever the agent
+	// accumulates — files it writes, caches it builds, the conversation history a
+	// runtime keeps under HOME — survives a restart.
 	//
-	// One Agent owns one repository. Cross-repository work is expressed by
-	// referencing another Agent as a Tool rather than by mounting a second repo:
-	// see spec.expose. That keeps each working tree single-writer, and makes the
-	// dependency between repositories a declared, policeable edge instead of a
-	// shared mount.
+	// Set repository to populate it from git, which is what a coding agent
+	// (Claude Code, Codex, OpenCode, …) needs. Leave it unset and the directory
+	// starts empty: an assistant that files notes, caches what it fetched, or
+	// simply needs somewhere writable gets the same durable volume, and the same
+	// sandbox around it, without pretending to own a repository.
+	//
+	// Either way the volume has exactly one writer, so the runtime Deployment is
+	// pinned to a single replica. For a repository-bound Agent, cross-repository
+	// work is expressed by referencing another Agent as a Tool rather than by
+	// mounting a second repo: see spec.expose. That keeps each working tree
+	// single-writer, and makes the dependency between repositories a declared,
+	// policeable edge instead of a shared mount.
 	// +optional
 	Workspace *AgentWorkspaceSpec `json:"workspace,omitempty"`
 
@@ -117,12 +124,17 @@ type AgentSpec struct {
 	Expose *AgentExposeSpec `json:"expose,omitempty"`
 }
 
-// AgentWorkspaceSpec binds an Agent to a source repository.
+// AgentWorkspaceSpec is the Agent's persistent working directory, optionally
+// populated from a git repository.
 type AgentWorkspaceSpec struct {
-	// repository is the clone URL (https or ssh).
-	// +kubebuilder:validation:MinLength=1
-	// +required
-	Repository string `json:"repository"`
+	// repository is the clone URL (https or ssh) to populate the working
+	// directory from. Omit it for a working directory that starts empty.
+	//
+	// branch and credentialRef only mean anything alongside it — there is
+	// nothing to check out or authenticate against without a repository, so
+	// setting either one alone is rejected rather than silently ignored.
+	// +optional
+	Repository string `json:"repository,omitempty"`
 
 	// branch to check out. Defaults to the repository's default branch.
 	// +optional

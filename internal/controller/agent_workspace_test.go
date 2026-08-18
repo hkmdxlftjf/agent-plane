@@ -554,6 +554,89 @@ var _ = Describe("Agent workspace", func() {
 		})
 	})
 
+	// A workspace is a persistent working directory; git is one way to fill it.
+	// An assistant that keeps notes, caches what it fetched, or just needs
+	// somewhere writable gets the same durable volume and the same sandbox
+	// without declaring a repository it does not have.
+	Context("When a workspace declares no repository", func() {
+		const agentName = "test-bare-ws-agent"
+		agentKey := types.NamespacedName{Name: agentName, Namespace: nsDefault}
+		depKey := types.NamespacedName{Name: agentName + "-runtime", Namespace: nsDefault}
+		pvcKey := types.NamespacedName{Name: agentName + "-workspace", Namespace: nsDefault}
+
+		BeforeEach(func() {
+			agent := &corev1alpha1.Agent{
+				ObjectMeta: metav1.ObjectMeta{Name: agentName, Namespace: nsDefault},
+				Spec: corev1alpha1.AgentSpec{
+					ModelRef:  &corev1alpha1.LocalReference{Name: testAnyModel},
+					Runtime:   &corev1alpha1.AgentRuntimeSpec{Image: testCodingImage, Port: 8080},
+					Workspace: &corev1alpha1.AgentWorkspaceSpec{Size: "5Gi"},
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
+		})
+
+		AfterEach(func() {
+			deleteIfExists(ctx, agentKey, &corev1alpha1.Agent{})
+			deleteIfExists(ctx, depKey, &appsv1.Deployment{})
+			deleteIfExists(ctx, pvcKey, &corev1.PersistentVolumeClaim{})
+		})
+
+		It("provisions the volume and the sandbox, without touching git", func() {
+			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("provisioning the same persistent volume a repository would get")
+			pvc := &corev1.PersistentVolumeClaim{}
+			Expect(k8sClient.Get(ctx, pvcKey, pvc)).To(Succeed())
+			Expect(pvc.Spec.Resources.Requests.Storage().String()).To(Equal("5Gi"))
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, depKey, dep)).To(Succeed())
+
+			By("still preparing HOME, which the runtime container cannot create itself")
+			// The volume is fresh and root-owned; the runtime drops to a non-root uid
+			// whose only shared credential is the fsGroup. Skipping this step for a
+			// repository-less workspace would break exactly the runtimes this change
+			// is meant to enable, and only on a first boot.
+			Expect(dep.Spec.Template.Spec.InitContainers).To(HaveLen(1))
+			prepare := dep.Spec.Template.Spec.InitContainers[0]
+			Expect(prepare.Command[2]).To(ContainSubstring("mkdir -p \"$DIR/" + agentHomeDirName))
+			Expect(prepare.Command[2]).To(ContainSubstring("chmod 2775"))
+
+			By("not attempting a clone")
+			Expect(prepare.Command[2]).NotTo(ContainSubstring("git clone"))
+			Expect(envOf(prepare)).NotTo(HaveKey("AGENTPLANE_REPOSITORY"))
+			Expect(envOf(prepare)).NotTo(HaveKey("AGENTPLANE_BRANCH"))
+			Expect(prepare.VolumeMounts).To(HaveLen(1))
+
+			runtime := dep.Spec.Template.Spec.Containers[0]
+
+			By("configuring no git at all")
+			// safe.directory answers "git refuses a tree owned by another uid".
+			// There is no tree here, so declaring it would describe a relationship
+			// this Agent does not have.
+			Expect(envOf(runtime)).NotTo(HaveKey("GIT_CONFIG_COUNT"))
+			Expect(envOf(runtime)).NotTo(HaveKey("GIT_CONFIG_KEY_0"))
+			Expect(envOf(runtime)).NotTo(HaveKey("AGENTPLANE_GIT_CREDENTIAL_FILE"))
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				Expect(v.Name).NotTo(Equal("git-credential"))
+			}
+
+			By("giving it the durable HOME and the sandbox regardless")
+			home := "/workspace/" + agentHomeDirName
+			Expect(envOf(runtime)["HOME"]).To(Equal(home))
+			Expect(envOf(runtime)["AGENTPLANE_WORKSPACE"]).To(Equal("/workspace"))
+			sc := runtime.SecurityContext
+			Expect(sc).NotTo(BeNil())
+			Expect(*sc.ReadOnlyRootFilesystem).To(BeTrue())
+			Expect(*sc.RunAsNonRoot).To(BeTrue())
+			Expect(dep.Spec.Strategy.Type).To(Equal(appsv1.RecreateDeploymentStrategyType))
+			Expect(*dep.Spec.Replicas).To(Equal(int32(1)))
+		})
+	})
+
 	// An Agent with no workspace keeps the previous behavior exactly.
 	Context("When an Agent has no workspace", func() {
 		const agentName = "test-no-ws-agent"
