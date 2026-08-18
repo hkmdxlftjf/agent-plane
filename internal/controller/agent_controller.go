@@ -782,93 +782,10 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 			dep.Spec.Template.Spec.Volumes = nil
 			dep.Spec.Template.Spec.SecurityContext = nil
 		} else {
-			mount := workspaceMountPath(ws)
-			// Declaring the tree safe through git's environment-based config avoids
-			// having to know the runtime image's uid, which the Operator cannot see
-			// (the clone init container runs as root; the runtime image typically
-			// drops to a non-root uid, and git refuses to operate on a tree owned by
-			// a different user — "detected dubious ownership"). Writing ~/.gitconfig
-			// would need that uid's home directory to exist and be writable; this
-			// does not.
-			gitConfigCount := 1
-			gitConfigEnv := []corev1.EnvVar{
-				{Name: "GIT_CONFIG_KEY_0", Value: "safe.directory"},
-				{Name: "GIT_CONFIG_VALUE_0", Value: mount},
-			}
-			mounts := []corev1.VolumeMount{
-				{Name: workspaceVolumeName, MountPath: mount},
-				// A coding agent's bash/file tools are the actual sandbox boundary: the
-				// container's SecurityContext below locks the root filesystem read-only,
-				// so anything a build or editor writes outside the working tree (caches,
-				// temp files) needs somewhere to land.
-				{Name: "tmp", MountPath: "/tmp"},
-			}
-			if gitSecret != "" {
-				// The runtime container needs the same push credential the clone step
-				// used to read the repository — otherwise a coding agent can read but
-				// never push its own commits. Mounted read-only and consumed through a
-				// credential helper, never interpolated into the remote URL.
-				gitConfigCount = 2
-				gitConfigEnv = append(gitConfigEnv,
-					corev1.EnvVar{Name: "GIT_CONFIG_KEY_1", Value: "credential.helper"},
-					corev1.EnvVar{Name: "GIT_CONFIG_VALUE_1", Value: gitCredentialHelper},
-				)
-				mounts = append(mounts, corev1.VolumeMount{
-					Name:      "git-credential",
-					MountPath: gitCredentialMountPath,
-					ReadOnly:  true,
-				})
-			}
-			if modelSecret != "" {
-				mounts = append(mounts, corev1.VolumeMount{
-					Name:      "model-credential",
-					MountPath: modelCredentialMountPath,
-					ReadOnly:  true,
-				})
-			}
-			// HOME must be writable and durable: the root filesystem is read-only,
-			// and a runtime that keeps conversation state (or resolves plugin
-			// dependencies) at startup needs that to survive a restart. XDG_* are
-			// set alongside HOME because tools split state across them and only
-			// some derive from HOME.
-			home := mount + "/" + agentHomeDirName
-			container.Env = append(container.Env,
-				corev1.EnvVar{Name: "AGENTPLANE_WORKSPACE", Value: mount},
-				corev1.EnvVar{Name: "AGENTPLANE_AGENT_HOME", Value: home},
-				corev1.EnvVar{Name: "HOME", Value: home},
-				corev1.EnvVar{Name: "XDG_CONFIG_HOME", Value: home + "/.config"},
-				corev1.EnvVar{Name: "XDG_DATA_HOME", Value: home + "/share"},
-				corev1.EnvVar{Name: "XDG_STATE_HOME", Value: home + "/state"},
-				corev1.EnvVar{Name: "XDG_CACHE_HOME", Value: home + "/cache"},
-				corev1.EnvVar{Name: "GIT_CONFIG_COUNT", Value: strconv.Itoa(gitConfigCount)},
-			)
-			// Only when the credential is actually mounted. Pointing at a path that
-			// does not exist is worse than saying nothing: the credential helper
-			// above reads this file, so an agent told where the token is finds an
-			// empty one and reports an authentication failure, rather than the
-			// "no credential configured" that is actually true.
-			if gitSecret != "" {
-				container.Env = append(container.Env,
-					corev1.EnvVar{Name: "AGENTPLANE_GIT_CREDENTIAL_FILE", Value: gitCredentialMountPath + "/token"},
-				)
-			}
-			container.Env = append(container.Env, gitConfigEnv...)
-			container.VolumeMounts = mounts
-
-			// A workspace-bound runtime executes model-directed shell commands against
-			// a real checkout, so it gets the same isolation a build sandbox would:
-			// no root, no added Linux capabilities, no privilege escalation, the
-			// default seccomp profile, and a read-only root filesystem — the working
-			// tree and /tmp are the only writable paths. This is enforced by the
-			// container runtime, not by the agent's own tool code, so it holds even
-			// if a tool implementation has a bug.
-			container.SecurityContext = &corev1.SecurityContext{
-				AllowPrivilegeEscalation: boolPtr(false),
-				ReadOnlyRootFilesystem:   boolPtr(true),
-				RunAsNonRoot:             boolPtr(true),
-				Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-				SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-			}
+			pod := workspacePodSpec(agent, gitSecret, modelSecret)
+			container.Env = append(container.Env, pod.env...)
+			container.VolumeMounts = pod.mounts
+			container.SecurityContext = pod.securityContext
 
 			// A working tree has exactly one writer. RollingUpdate would start the
 			// new pod before the old one exits, so two agents would edit the same
@@ -878,34 +795,7 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 			dep.Spec.Replicas = &one
 			dep.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
 
-			volumes := []corev1.Volume{
-				{
-					Name: workspaceVolumeName,
-					VolumeSource: corev1.VolumeSource{
-						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: workspaceClaimName(agent),
-						},
-					},
-				},
-				{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-			}
-			if gitSecret != "" {
-				volumes = append(volumes, corev1.Volume{
-					Name: "git-credential",
-					VolumeSource: corev1.VolumeSource{
-						Secret: &corev1.SecretVolumeSource{SecretName: gitSecret},
-					},
-				})
-			}
-			if modelSecret != "" {
-				volumes = append(volumes, corev1.Volume{
-					Name: "model-credential",
-					VolumeSource: corev1.VolumeSource{
-						Secret: &corev1.SecretVolumeSource{SecretName: modelSecret},
-					},
-				})
-			}
-			dep.Spec.Template.Spec.Volumes = volumes
+			dep.Spec.Template.Spec.Volumes = pod.volumes
 			dep.Spec.Template.Spec.InitContainers = []corev1.Container{
 				cloneInitContainer(agent, gitSecret != ""),
 			}
@@ -954,6 +844,150 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 		agent.Status.WorkspaceClaim = ""
 	}
 	return nil
+}
+
+// runtimePod is the pod-level wiring a workspace contributes to the runtime
+// container: the volumes it needs, where they are mounted, the environment that
+// points the runtime at them, and the isolation it runs under.
+//
+// Grouped into one value because the four are derived from the same inputs and
+// must agree — a mount with no volume behind it, or an env var naming a path
+// nothing is mounted at, are exactly the failure modes this assembly is prone to.
+type runtimePod struct {
+	volumes         []corev1.Volume
+	mounts          []corev1.VolumeMount
+	env             []corev1.EnvVar
+	securityContext *corev1.SecurityContext
+}
+
+// workspacePodSpec assembles the volumes, mounts, environment and isolation for
+// a workspace-bound runtime. gitSecret and modelSecret are Secret names already
+// resolved by the caller, empty when there is none.
+//
+// Kept out of reconcileRuntime so the assembly is one readable unit rather than
+// a hundred lines nested inside a CreateOrUpdate closure, and so it can be
+// reasoned about (and later extended) without touching the Deployment plumbing
+// around it.
+func workspacePodSpec(agent *corev1alpha1.Agent, gitSecret, modelSecret string) runtimePod {
+	ws := agent.Spec.Workspace
+	mount := workspaceMountPath(ws)
+
+	// Declaring the tree safe through git's environment-based config avoids
+	// having to know the runtime image's uid, which the Operator cannot see
+	// (the clone init container runs as root; the runtime image typically
+	// drops to a non-root uid, and git refuses to operate on a tree owned by
+	// a different user — "detected dubious ownership"). Writing ~/.gitconfig
+	// would need that uid's home directory to exist and be writable; this
+	// does not.
+	gitConfigCount := 1
+	gitConfigEnv := []corev1.EnvVar{
+		{Name: "GIT_CONFIG_KEY_0", Value: "safe.directory"},
+		{Name: "GIT_CONFIG_VALUE_0", Value: mount},
+	}
+
+	volumes := []corev1.Volume{
+		{
+			Name: workspaceVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: workspaceClaimName(agent),
+				},
+			},
+		},
+		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+	}
+	mounts := []corev1.VolumeMount{
+		{Name: workspaceVolumeName, MountPath: mount},
+		// A coding agent's bash/file tools are the actual sandbox boundary: the
+		// container's SecurityContext below locks the root filesystem read-only,
+		// so anything a build or editor writes outside the working tree (caches,
+		// temp files) needs somewhere to land.
+		{Name: "tmp", MountPath: "/tmp"},
+	}
+
+	if gitSecret != "" {
+		// The runtime container needs the same push credential the clone step
+		// used to read the repository — otherwise a coding agent can read but
+		// never push its own commits. Mounted read-only and consumed through a
+		// credential helper, never interpolated into the remote URL.
+		gitConfigCount = 2
+		gitConfigEnv = append(gitConfigEnv,
+			corev1.EnvVar{Name: "GIT_CONFIG_KEY_1", Value: "credential.helper"},
+			corev1.EnvVar{Name: "GIT_CONFIG_VALUE_1", Value: gitCredentialHelper},
+		)
+		volumes = append(volumes, corev1.Volume{
+			Name: "git-credential",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{SecretName: gitSecret},
+			},
+		})
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      "git-credential",
+			MountPath: gitCredentialMountPath,
+			ReadOnly:  true,
+		})
+	}
+	if modelSecret != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "model-credential",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{SecretName: modelSecret},
+			},
+		})
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      "model-credential",
+			MountPath: modelCredentialMountPath,
+			ReadOnly:  true,
+		})
+	}
+
+	// HOME must be writable and durable: the root filesystem is read-only,
+	// and a runtime that keeps conversation state (or resolves plugin
+	// dependencies) at startup needs that to survive a restart. XDG_* are
+	// set alongside HOME because tools split state across them and only
+	// some derive from HOME.
+	home := mount + "/" + agentHomeDirName
+	env := []corev1.EnvVar{
+		{Name: "AGENTPLANE_WORKSPACE", Value: mount},
+		{Name: "AGENTPLANE_AGENT_HOME", Value: home},
+		{Name: "HOME", Value: home},
+		{Name: "XDG_CONFIG_HOME", Value: home + "/.config"},
+		{Name: "XDG_DATA_HOME", Value: home + "/share"},
+		{Name: "XDG_STATE_HOME", Value: home + "/state"},
+		{Name: "XDG_CACHE_HOME", Value: home + "/cache"},
+		{Name: "GIT_CONFIG_COUNT", Value: strconv.Itoa(gitConfigCount)},
+	}
+	// Only when the credential is actually mounted. Pointing at a path that
+	// does not exist is worse than saying nothing: the credential helper
+	// above reads this file, so an agent told where the token is finds an
+	// empty one and reports an authentication failure, rather than the
+	// "no credential configured" that is actually true.
+	if gitSecret != "" {
+		env = append(env, corev1.EnvVar{
+			Name: "AGENTPLANE_GIT_CREDENTIAL_FILE", Value: gitCredentialMountPath + "/token",
+		})
+	}
+	env = append(env, gitConfigEnv...)
+
+	return runtimePod{
+		volumes: volumes,
+		mounts:  mounts,
+		env:     env,
+		// A workspace-bound runtime executes model-directed shell commands against
+		// a real checkout, so it gets the same isolation a build sandbox would:
+		// no root, no added Linux capabilities, no privilege escalation, the
+		// default seccomp profile, and a read-only root filesystem — the working
+		// tree and /tmp are the only writable paths. This is enforced by the
+		// container runtime, not by the agent's own tool code, so it holds even
+		// if a tool implementation has a bug.
+		securityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: boolPtr(false),
+			ReadOnlyRootFilesystem:   boolPtr(true),
+			RunAsNonRoot:             boolPtr(true),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		},
+	}
 }
 
 // resolveModelSecret returns the Secret name holding the Agent's model
