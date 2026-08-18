@@ -840,9 +840,18 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 				corev1.EnvVar{Name: "XDG_DATA_HOME", Value: home + "/share"},
 				corev1.EnvVar{Name: "XDG_STATE_HOME", Value: home + "/state"},
 				corev1.EnvVar{Name: "XDG_CACHE_HOME", Value: home + "/cache"},
-				corev1.EnvVar{Name: "AGENTPLANE_GIT_CREDENTIAL_FILE", Value: gitCredentialMountPath + "/token"},
 				corev1.EnvVar{Name: "GIT_CONFIG_COUNT", Value: strconv.Itoa(gitConfigCount)},
 			)
+			// Only when the credential is actually mounted. Pointing at a path that
+			// does not exist is worse than saying nothing: the credential helper
+			// above reads this file, so an agent told where the token is finds an
+			// empty one and reports an authentication failure, rather than the
+			// "no credential configured" that is actually true.
+			if gitSecret != "" {
+				container.Env = append(container.Env,
+					corev1.EnvVar{Name: "AGENTPLANE_GIT_CREDENTIAL_FILE", Value: gitCredentialMountPath + "/token"},
+				)
+			}
 			container.Env = append(container.Env, gitConfigEnv...)
 			container.VolumeMounts = mounts
 

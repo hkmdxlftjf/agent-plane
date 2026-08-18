@@ -126,6 +126,14 @@ var _ = Describe("Agent workspace", func() {
 			Expect(envOf(runtime)["GIT_CONFIG_KEY_0"]).To(Equal("safe.directory"))
 			Expect(envOf(runtime)["GIT_CONFIG_VALUE_0"]).To(Equal("/workspace"))
 
+			By("not naming a credential file when no credential is mounted")
+			// This Agent declares no workspace credentialRef, so nothing is mounted at
+			// gitCredentialMountPath. Exporting the path anyway would send the
+			// credential helper to read a file that does not exist, and git would
+			// report an authentication failure instead of the "no credential
+			// configured" that is actually the case.
+			Expect(envOf(runtime)).NotTo(HaveKey("AGENTPLANE_GIT_CREDENTIAL_FILE"))
+
 			By("pinning to a single writer")
 			// A working tree has exactly one writer. RollingUpdate would overlap two
 			// pods on the same checkout, and with ReadWriteOnce the new one could not
