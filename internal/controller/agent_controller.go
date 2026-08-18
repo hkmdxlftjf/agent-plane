@@ -150,12 +150,33 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	agent.Status.ObservedGeneration = agent.Generation
+
+	// Structural validation, the same shape every other controller uses.
+	//
+	// The webhook runs this too, but it is not always there: config/local sets
+	// ENABLE_WEBHOOKS=false, which is the common way to run this Operator
+	// locally, and until now that meant an Agent got no structural validation at
+	// all — a relative mountPath or a volume shadowing the working directory
+	// would reach reconcileRuntime and surface as a broken pod.
+	//
+	// Reported, not returned: a malformed spec does not become well-formed by
+	// being retried, so returning an error would only fill the event stream while
+	// the Agent's own status says nothing about why.
+	if err := agent.Spec.Validate(); err != nil {
+		agent.Status.Phase = corev1alpha1.AgentPhaseDegraded
+		agent.Status.ResolvedConfigHash = ""
+		setCondition(&agent.Status.Conditions, corev1alpha1.ConditionReady, metav1.ConditionFalse,
+			corev1alpha1.ReasonInvalidSpec, err.Error(), agent.Generation)
+		log.Info("agent spec is invalid", "error", err)
+		return ctrl.Result{}, r.Status().Update(ctx, &agent)
+	}
+
 	res, err := r.resolveRefs(ctx, &agent)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	agent.Status.ObservedGeneration = agent.Generation
 	agent.Status.ResolvedRefs = len(res.refs)
 
 	// Materialize the runtime workload if requested (pull model).

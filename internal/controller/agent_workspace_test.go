@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -994,6 +995,53 @@ var _ = Describe("Agent workspace", func() {
 
 			Expect(k8sClient.Get(ctx, agentKey, agent)).To(Succeed())
 			Expect(agent.Status.ResolvedConfigHash).NotTo(Equal(before))
+		})
+	})
+
+	// The webhook validates an Agent's spec, but config/local runs with
+	// ENABLE_WEBHOOKS=false — so without this the most common local setup gave an
+	// Agent no structural validation at all, and every check added for workspaces
+	// and volumes would be dead exactly where it is most likely to be needed.
+	Context("When an invalid spec reaches the controller directly", func() {
+		const agentName = "test-invalid-agent"
+		agentKey := types.NamespacedName{Name: agentName, Namespace: nsDefault}
+		depKey := types.NamespacedName{Name: agentName + "-runtime", Namespace: nsDefault}
+
+		AfterEach(func() {
+			deleteIfExists(ctx, agentKey, &corev1alpha1.Agent{})
+			deleteIfExists(ctx, depKey, &appsv1.Deployment{})
+		})
+
+		It("reports it on the Agent rather than materializing a broken pod", func() {
+			// Built in Go and reconciled directly: the CRD's own schema would not
+			// catch this one, and with webhooks off nothing else would either.
+			agent := &corev1alpha1.Agent{
+				ObjectMeta: metav1.ObjectMeta{Name: agentName, Namespace: nsDefault},
+				Spec: corev1alpha1.AgentSpec{
+					ModelRef: &corev1alpha1.LocalReference{Name: testAnyModel},
+					Runtime:  &corev1alpha1.AgentRuntimeSpec{Image: testRuntimeImage},
+					// A branch with nothing to check out.
+					Workspace: &corev1alpha1.AgentWorkspaceSpec{Branch: "main"},
+				},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
+
+			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+
+			By("not returning an error, since retrying cannot fix a malformed spec")
+			Expect(err).NotTo(HaveOccurred())
+
+			By("saying so in the Agent's own status")
+			Expect(k8sClient.Get(ctx, agentKey, agent)).To(Succeed())
+			Expect(agent.Status.Phase).To(Equal(corev1alpha1.AgentPhaseDegraded))
+			cond := meta.FindStatusCondition(agent.Status.Conditions, corev1alpha1.ConditionReady)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(corev1alpha1.ReasonInvalidSpec))
+			Expect(cond.Message).To(ContainSubstring("spec.workspace.branch"))
+
+			By("creating no Deployment for it")
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, depKey, &appsv1.Deployment{}))).To(BeTrue())
 		})
 	})
 
