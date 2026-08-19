@@ -15,8 +15,12 @@
 set -euo pipefail
 
 KIND_CLUSTER="${KIND_CLUSTER:-agent-plane}"
-IMG="${IMG:-agent-plane:dev}"
-REGISTRY_IMG="${REGISTRY_IMG:-agent-plane-registry:dev}"  # must match config/registry/registry.yaml
+# Fully-qualified on purpose: podman normalizes unqualified names to
+# localhost/... in the node's containerd, which then no longer matches what
+# kubelet resolves (docker.io/library/...) — IfNotPresent misses and the pull
+# hits docker.io and fails.
+IMG="${IMG:-docker.io/library/agent-plane:dev}"
+REGISTRY_IMG="${REGISTRY_IMG:-docker.io/library/agent-plane-registry:dev}"  # resolves same as the unqualified name in config/registry/registry.yaml
 CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.18.2}"
 NAMESPACE="agent-plane-system"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-300s}"
