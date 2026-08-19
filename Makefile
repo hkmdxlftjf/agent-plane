@@ -192,6 +192,26 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
+##@ Local kind cluster
+
+KIND_CLUSTER ?= agent-plane
+
+.PHONY: kind-create
+kind-create: ## Create (or reuse) the dedicated local kind cluster.
+	KIND_CLUSTER=$(KIND_CLUSTER) ./hack/kind-local.sh create
+
+.PHONY: kind-delete
+kind-delete: ## Delete the dedicated local kind cluster.
+	KIND_CLUSTER=$(KIND_CLUSTER) ./hack/kind-local.sh delete
+
+.PHONY: kind-images
+kind-images: ## Build and load operator + registry images into the kind cluster.
+	KIND_CLUSTER=$(KIND_CLUSTER) ./hack/kind-local.sh images
+
+.PHONY: deploy-kind
+deploy-kind: ## One-shot local deploy: kind + cert-manager + operator + registry (full webhook path).
+	KIND_CLUSTER=$(KIND_CLUSTER) ./hack/kind-local.sh deploy
+
 ##@ Dependencies
 
 ## Location to install dependencies to
