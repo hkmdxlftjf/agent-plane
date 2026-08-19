@@ -42,6 +42,14 @@ jobs:
       - name: Verify Helm installation
         run: helm version
 
+      # Before linting, because lint cannot see this class of breakage: the chart
+      # keeps its own copy of every CRD, and a stale copy is still valid YAML. The
+      # copies had drifted by three features before anyone noticed — a chart
+      # install then rejects this repository's own samples with "unknown field",
+      # while the CRD looks present and the field looks documented.
+      - name: Check the chart's CRDs are up to date
+        run: make chart-crds-check
+
       - name: Lint Helm Chart
         run: |
           helm lint ./dist/chart

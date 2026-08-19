@@ -1,0 +1,163 @@
+# Feishu -> coding Agent -> Feishu, wired to this repository.
+#
+# There is no Trigger here, and that is the point. The runtime image is opencode
+# plus the Agent Plane plugin, and the plugin holds the Lark connection itself —
+# so the platform connection lives inside the same pod that runs the model,
+# rather than in a separate adapter pod POSTing to /api/chat. Nothing in this
+# file mentions an endpoint or a port for a Lark adapter to call, because there
+# is no such caller.
+#
+# What that buys: one moving part instead of two, and an approval loop that is
+# real. opencode blocks a turn on a bash or edit permission; the plugin renders
+# that as an interactive card and answers the permission with the user's click,
+# so the model's work up to the question is resumed rather than redone.
+#
+# What it costs: the platform is no longer swappable by changing a Trigger
+# image. Adding DingTalk or Slack means another plugin, not another Trigger.
+# For a plain (non-workspace) Agent the Trigger contract still applies — see
+# config/samples/inbound/lark-trigger.yaml and docs/adapter-protocol.md.
+#
+# Prerequisites: three Secrets. The Model and Credentials are in this file.
+#
+# In the Lark console the app needs im:message:send_as_bot
+# (plus im:message.reactions:write for the emoji receipt), an
+# im.message.receive_v1 event subscription in "long connection" mode, and — this
+# one is easy to miss — 卡片回调 (card callback) also set to the long connection
+# rather than a webhook URL, or the approval buttons will do nothing.
+#
+#   kubectl create secret generic gateway-token --from-literal=token=<model gateway key>
+#   kubectl create secret generic git-token --from-literal=token=<GitHub PAT>
+#   kubectl create secret generic lark-app \
+#     --from-literal=app-id=cli_xxx --from-literal=app-secret=yyy
+#   kubectl apply -f config/samples/coding/lark-mcp.yaml -n default
+#   kubectl apply -f config/samples/coding/lark-coding-agent.yaml -n default
+#
+# Watch it come up (the plugin logs its projection on startup):
+#
+#   kubectl logs deploy/coding-agent-runtime -f | grep agent-plane
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Credential
+metadata:
+  name: git-token
+spec:
+  secretRef:
+    name: git-token
+    key: token
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Credential
+metadata:
+  name: gateway-cred
+spec:
+  secretRef:
+    name: gateway-token
+    key: token
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Model
+metadata:
+  name: gateway-opus
+spec:
+  provider: custom
+  modelName: claude-opus-5
+  # An OpenAI-compatible gateway. provider: custom means the endpoint is
+  # required — there is no per-provider default.
+  endpoint: http://44.212.73.18:3000/v1
+  credentialRef:
+    name: gateway-cred
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: PromptTemplate
+metadata:
+  name: coding-agent-prompt
+spec:
+  # Projected into the file opencode reads as an instruction — the plugin writes
+  # it under the agent's home on startup. Note what is NOT here: any mention of
+  # a confirmation tool. Approvals are enforced by opencode's permission system
+  # (the plugin sets bash and edit to "ask"), not by asking the model to
+  # remember to be careful. A prompt cannot be relied on to stop a model
+  # mid-turn; a blocked tool call can.
+  system: |
+    You are a coding agent working in a checkout of
+    github.com/hkmdxlftjf/agent-plane. Read the code and make real changes;
+    commit and push with git.
+
+    Never push directly to main. For every task, create a new branch off main
+    (name it after the task) and push your commits there, so a human reviews
+    the diff before it merges.
+
+    Running a shell command or editing a file pauses for the user's approval,
+    and they see the command on a card with an approve/reject button. They are
+    deciding from that card alone, so before each command say in one short
+    sentence what it is for and what it will change — plain language, not a
+    restatement of the shell. "查看 controller 如何挂载凭据" tells them
+    something; "运行 grep" does not. Prefer one clear command over several
+    speculative ones.
+
+    Never read, echo, or interpolate credentials — environment variables or
+    files holding tokens, secrets, or API keys. Anything a command prints
+    enters this conversation and may be repeated later, so masking it is not
+    enough. If a task appears to need a credential, say which one and stop.
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Agent
+metadata:
+  name: coding-agent
+spec:
+  description: Coding agent for agent-plane, reachable from Feishu.
+  modelRef:
+    name: gateway-opus
+  promptRef:
+    name: coding-agent-prompt
+  # Feishu as a Tool, so the agent never holds the credential. Apply
+  # config/samples/coding/lark-mcp.yaml first. Adding or changing an MCP server
+  # needs a pod restart; the runtime logs which change it was.
+  toolRefs:
+    - name: lark-docs
+  # One Agent, one repository, one working tree — a checkout has exactly one
+  # writer. The Operator provisions the volume, clones into it, and pins the
+  # Deployment to a single replica with the Recreate strategy.
+  workspace:
+    repository: https://github.com/hkmdxlftjf/agent-plane.git
+    credentialRef:
+      name: git-token
+  runtime:
+    # Built from Dockerfile.coding-agent: opencode (pinned) plus the plugin,
+    # with the plugin's dependencies and the model catalog baked in so a cluster
+    # without egress to npm or models.dev still starts.
+    image: agent-plane-coding-agent:local
+    # port is optional for this shape — nothing POSTs to this Agent. Set it if
+    # you want the Service, e.g. to reach opencode's own API or web UI. Setting it
+    # also enables the default readiness probe, which is worth having: this
+    # runtime answers /api/health long before it has projected any config, so
+    # without the probe a failed startup reports 1/1 Running while every message
+    # hangs. See docs/usage.md §14.
+    port: 4096
+    # runtimeClassName: gvisor
+    # Uncomment if the cluster has a sandboxed runtime installed. This Agent runs
+    # shell commands a model chose, so the kernel boundary is load-bearing; the
+    # container already runs non-root with no capabilities and a read-only root
+    # filesystem. Naming a RuntimeClass that does not exist leaves pods Pending.
+    # The identity that reads the model credential. Also what keeps the Secret
+    # read off the namespace's "default" ServiceAccount.
+    serviceAccountName: agent-runtime
+    env:
+      # The Lark app credential. The plugin prefers a mounted file — a value in
+      # the environment is readable by the model itself, since this same process
+      # runs the shell commands it asks for — but the Agent CRD has no field for
+      # mounting an inbound credential yet, so this is how it is expressed today.
+      # The plugin logs a warning when it falls back to the environment.
+      - name: AGENTPLANE_LARK_APP_ID
+        valueFrom:
+          secretKeyRef:
+            name: lark-app
+            key: app-id
+      - name: AGENTPLANE_LARK_APP_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: lark-app
+            key: app-secret
+      # Cards are on by default; set to "0" for plain-text approvals (the user
+      # then answers by typing the option's label back).
+      - name: AGENTPLANE_LARK_CARD
+        value: "1"

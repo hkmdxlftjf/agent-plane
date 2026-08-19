@@ -47,6 +47,7 @@ const (
 	idxAgentPolicies     = "spec.policyRefs"
 	idxAgentToolPolicies = "spec.toolPolicyRefs"
 	idxAgentKnowledge    = "spec.knowledgeBaseRefs"
+	idxAgentCredentials  = "spec.credentialRefs"
 	idxAgentClass        = "spec.agentClassRef"
 
 	idxClassModel    = "spec.defaultModelRef"
@@ -153,6 +154,9 @@ func indexSpecs() []indexSpec {
 		}},
 		{&corev1alpha1.Agent{}, idxAgentKnowledge, func(o client.Object) []string {
 			return refNamesOf(o.(*corev1alpha1.Agent).Spec.KnowledgeBaseRefs)
+		}},
+		{&corev1alpha1.Agent{}, idxAgentCredentials, func(o client.Object) []string {
+			return refNamesOf(o.(*corev1alpha1.Agent).Spec.CredentialRefs)
 		}},
 		{&corev1alpha1.Agent{}, idxAgentClass, func(o client.Object) []string {
 			return refName(o.(*corev1alpha1.Agent).Spec.AgentClassRef)

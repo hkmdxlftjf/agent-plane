@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -89,6 +90,30 @@ type AgentSpec struct {
 	// +listType=atomic
 	KnowledgeBaseRefs []LocalReference `json:"knowledgeBaseRefs,omitempty"`
 
+	// credentialRefs lists Credentials the runtime needs for things Agent Plane
+	// does not model — an IM app secret, a home automation token, a vendor API
+	// key. Each one's Secret is mounted as files under
+	// $AGENTPLANE_CREDENTIALS_PATH/<credential-name>/, one file per key.
+	//
+	// This exists because the alternative was spec.runtime.env with a
+	// secretKeyRef, and the two are not equivalent. An environment value is
+	// visible in `kubectl describe pod`, is inherited by every child process the
+	// agent spawns, and tends to end up in logs and crash dumps. A file is none
+	// of those.
+	//
+	// What it does NOT do is hide the value from the model. A runtime that
+	// executes model-directed shell commands can read the file, exactly as it
+	// could read the environment. Mounting narrows where the secret leaks by
+	// accident; it is not a boundary against the agent itself. An Agent that must
+	// not hold a credential should reach the capability through a Tool whose MCP
+	// server holds it instead.
+	//
+	// A missing Credential leaves the Agent Degraded with ReferenceNotFound, the
+	// same as any other unresolved reference.
+	// +optional
+	// +listType=atomic
+	CredentialRefs []LocalReference `json:"credentialRefs,omitempty"`
+
 	// runtime, when set, tells the Operator to materialize an in-cluster agent
 	// runtime Deployment for this Agent (pull model: the container reads its
 	// config from the Registry). Omit to keep Agent Plane purely declarative and
@@ -96,16 +121,23 @@ type AgentSpec struct {
 	// +optional
 	Runtime *AgentRuntimeSpec `json:"runtime,omitempty"`
 
-	// workspace binds this Agent to one source repository. The Operator clones it
-	// into a persistent volume the runtime pod mounts, so a coding agent
-	// (Claude Code, Codex, OpenCode, …) has a working tree that survives
-	// restarts.
+	// workspace gives this Agent a persistent working directory: a volume the
+	// Operator provisions and the runtime pod mounts, so whatever the agent
+	// accumulates — files it writes, caches it builds, the conversation history a
+	// runtime keeps under HOME — survives a restart.
 	//
-	// One Agent owns one repository. Cross-repository work is expressed by
-	// referencing another Agent as a Tool rather than by mounting a second repo:
-	// see spec.expose. That keeps each working tree single-writer, and makes the
-	// dependency between repositories a declared, policeable edge instead of a
-	// shared mount.
+	// Set repository to populate it from git, which is what a coding agent
+	// (Claude Code, Codex, OpenCode, …) needs. Leave it unset and the directory
+	// starts empty: an assistant that files notes, caches what it fetched, or
+	// simply needs somewhere writable gets the same durable volume, and the same
+	// sandbox around it, without pretending to own a repository.
+	//
+	// Either way the volume has exactly one writer, so the runtime Deployment is
+	// pinned to a single replica. For a repository-bound Agent, cross-repository
+	// work is expressed by referencing another Agent as a Tool rather than by
+	// mounting a second repo: see spec.expose. That keeps each working tree
+	// single-writer, and makes the dependency between repositories a declared,
+	// policeable edge instead of a shared mount.
 	// +optional
 	Workspace *AgentWorkspaceSpec `json:"workspace,omitempty"`
 
@@ -117,12 +149,17 @@ type AgentSpec struct {
 	Expose *AgentExposeSpec `json:"expose,omitempty"`
 }
 
-// AgentWorkspaceSpec binds an Agent to a source repository.
+// AgentWorkspaceSpec is the Agent's persistent working directory, optionally
+// populated from a git repository.
 type AgentWorkspaceSpec struct {
-	// repository is the clone URL (https or ssh).
-	// +kubebuilder:validation:MinLength=1
-	// +required
-	Repository string `json:"repository"`
+	// repository is the clone URL (https or ssh) to populate the working
+	// directory from. Omit it for a working directory that starts empty.
+	//
+	// branch and credentialRef only mean anything alongside it — there is
+	// nothing to check out or authenticate against without a repository, so
+	// setting either one alone is rejected rather than silently ignored.
+	// +optional
+	Repository string `json:"repository,omitempty"`
 
 	// branch to check out. Defaults to the repository's default branch.
 	// +optional
@@ -243,6 +280,161 @@ type AgentRuntimeSpec struct {
 	// resources is the runtime container resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// readinessProbe overrides how readiness is decided for this runtime.
+	//
+	// Set it when "the process is listening" and "the agent can answer" are not
+	// the same thing — which is the common case for a runtime that does work at
+	// startup. A runtime that fetches config, resolves plugins, or opens an
+	// upstream connection can bind its port, answer a trivial health endpoint,
+	// and still hang on every real request; without a probe that distinguishes
+	// the two, Kubernetes reports 1/1 Running and the failure is invisible.
+	//
+	// Left unset, a workspace-bound runtime gets a default probe (see
+	// defaultWorkspaceReadinessProbe in internal/controller) and any other
+	// runtime gets none — an Agent that only serves /api/chat is ready as soon as
+	// it listens.
+	// +optional
+	ReadinessProbe *corev1.Probe `json:"readinessProbe,omitempty"`
+
+	// runtimeClassName selects a container runtime for the pod, e.g. "gvisor"
+	// for a syscall-intercepting sandbox.
+	//
+	// Worth setting when the Agent runs code you do not trust: a coding agent
+	// executes model-directed shell commands, and the container-level sandbox the
+	// Operator applies (read-only root filesystem, no capabilities, non-root)
+	// is enforced by the host kernel. A sandboxed runtime raises the cost of a
+	// kernel escape, at some latency. The named RuntimeClass must already exist
+	// in the cluster; naming one that does not leaves pods Pending.
+	// +optional
+	RuntimeClassName string `json:"runtimeClassName,omitempty"`
+
+	// volumes are extra volumes mounted into the runtime container: a NAS share
+	// through its PersistentVolumeClaim, a ConfigMap of settings, a Secret of
+	// API keys, a scratch directory.
+	//
+	// This is what lets an Agent reach something the control plane knows nothing
+	// about, without a new field per storage kind. spec.workspace remains the
+	// agent's own working directory; these are everything else.
+	//
+	// The volume sources are a deliberate subset of the pod API rather than all
+	// of it, and hostPath is the notable omission: a workspace runtime runs
+	// model-directed shell commands under a read-only root filesystem, dropped
+	// capabilities and a non-root uid, and one hostPath mount would step around
+	// all of it. An external filesystem belongs behind a PersistentVolumeClaim,
+	// which is also where its credentials stay.
+	//
+	// A volume may not reuse a name or a mount path the Operator already uses
+	// (workspace, tmp, git-credential, model-credential, and the credential
+	// directory) — that is rejected at apply time rather than resolved silently,
+	// since a mount that shadows one of those fails in ways that look like
+	// anything but a name collision.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Volumes []AgentVolume `json:"volumes,omitempty"`
+}
+
+// AgentVolume is one extra volume mounted into the runtime container, declared
+// as the volume and its mount together.
+//
+// Kubernetes splits these into two lists matched by name; keeping them as one
+// entry removes the failure that split invites — a volume with no mount, or a
+// mount naming a volume that is not there. An Agent volume goes into exactly one
+// container, so there is nothing the split would buy.
+//
+// Exactly one source must be set. The set is deliberately smaller than the pod
+// API's: see spec.runtime.volumes for why hostPath is not in it.
+// +kubebuilder:validation:XValidation:rule="[has(self.persistentVolumeClaim), has(self.configMap), has(self.secret), has(self.emptyDir)].exists_one(x, x)",message="exactly one of persistentVolumeClaim, configMap, secret or emptyDir must be set"
+type AgentVolume struct {
+	// name identifies the volume within the pod. Must not collide with a volume
+	// the Operator manages.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +required
+	Name string `json:"name"`
+
+	// mountPath is the absolute path the volume appears at in the runtime
+	// container.
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	MountPath string `json:"mountPath"`
+
+	// readOnly mounts the volume read-only.
+	//
+	// Worth setting for anything the agent only needs to read. The runtime may be
+	// executing shell commands a model chose, and a read-only mount is enforced
+	// by the kernel rather than by the agent deciding to behave.
+	// +optional
+	ReadOnly bool `json:"readOnly,omitempty"`
+
+	// persistentVolumeClaim mounts an existing PVC by name. This is how an
+	// external filesystem — NFS, CIFS, a NAS share, a cloud disk — reaches the
+	// agent: bind it to a PVC with the cluster's usual storage machinery, and any
+	// credentials it needs stay in the PersistentVolume rather than in this
+	// resource.
+	// +optional
+	PersistentVolumeClaim *AgentPVCVolumeSource `json:"persistentVolumeClaim,omitempty"`
+
+	// configMap mounts a ConfigMap's keys as files.
+	// +optional
+	ConfigMap *AgentObjectVolumeSource `json:"configMap,omitempty"`
+
+	// secret mounts a Secret's keys as files.
+	//
+	// Note what this does and does not do: it keeps the value out of the pod's
+	// environment and out of `kubectl describe pod`, but a runtime that executes
+	// model-directed shell commands can still read the file. See
+	// spec.credentialRefs, which is the same mechanism with the Credential
+	// indirection the rest of Agent Plane uses.
+	// +optional
+	Secret *AgentObjectVolumeSource `json:"secret,omitempty"`
+
+	// emptyDir is scratch space that lives as long as the pod. Useful under a
+	// read-only root filesystem, where a build or a download needs somewhere to
+	// land that is not the working directory.
+	// +optional
+	EmptyDir *AgentEmptyDirVolumeSource `json:"emptyDir,omitempty"`
+}
+
+// AgentPVCVolumeSource names an existing PersistentVolumeClaim.
+type AgentPVCVolumeSource struct {
+	// claimName is the PersistentVolumeClaim in this namespace. It must already
+	// exist — the Operator provisions a claim for spec.workspace, but never for
+	// one declared here.
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	ClaimName string `json:"claimName"`
+}
+
+// AgentObjectVolumeSource names a ConfigMap or Secret to mount as files.
+type AgentObjectVolumeSource struct {
+	// name is the ConfigMap or Secret in this namespace.
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	Name string `json:"name"`
+
+	// optional lets the pod start when the object does not exist yet. Left false,
+	// the pod stays Pending until it appears, which is usually what you want:
+	// starting an agent without the configuration it was given is rarely better
+	// than waiting for it.
+	// +optional
+	Optional *bool `json:"optional,omitempty"`
+}
+
+// AgentEmptyDirVolumeSource is pod-lifetime scratch space.
+type AgentEmptyDirVolumeSource struct {
+	// sizeLimit caps the volume, e.g. "1Gi". Worth setting: an unbounded
+	// emptyDir on the node's filesystem is evicted only once the node is already
+	// under disk pressure.
+	// +optional
+	SizeLimit *resource.Quantity `json:"sizeLimit,omitempty"`
+
+	// medium set to "Memory" backs the volume with a tmpfs, which counts against
+	// the container's memory limit.
+	// +kubebuilder:validation:Enum="";Memory
+	// +optional
+	Medium corev1.StorageMedium `json:"medium,omitempty"`
 }
 
 // AgentPhase is a coarse, human-facing summary of an Agent's reconcile state.

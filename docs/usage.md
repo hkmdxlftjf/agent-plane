@@ -261,7 +261,24 @@ spec:
     replicas: 2
     port: 8080                     # optional → also creates a Service
     # env: [...]  resources: {...}
+    # readinessProbe: {...}         # optional → see "Readiness" below
+    # runtimeClassName: gvisor      # optional → schedule onto a sandboxed runtime
 ```
+
+**Readiness.** For a plain runtime, no probe is set: an Agent that serves
+`/api/chat` is ready as soon as it listens. Workspace-bound runtimes get a
+default probe instead, because for them listening and working are not the same
+thing — see §14.
+
+**`runtimeClassName`** picks a container runtime for the pod, e.g. a
+syscall-intercepting sandbox such as gVisor or Kata. The pod-level isolation the
+Operator already applies to workspace runtimes (non-root, no capabilities,
+read-only root filesystem) is enforced by the host kernel; a sandboxed runtime
+additionally raises the cost of escaping it, which is worth paying for when the
+Agent executes model-directed shell commands. The named RuntimeClass must exist
+in the cluster already — naming one that does not leaves pods `Pending` with no
+other symptom. Clearing the field moves the Agent back to the default runtime on
+the next rollout.
 
 The Operator injects into each runtime pod:
 
@@ -269,11 +286,90 @@ The Operator injects into each runtime pod:
 |---|---|
 | `AGENTPLANE_REGISTRY` | in-cluster Registry URL (default `http://agent-plane-registry.agent-plane-system.svc:9090`; override with the manager's `AGENTPLANE_REGISTRY_URL`) |
 | `AGENTPLANE_AGENT_NAMESPACE` / `AGENTPLANE_AGENT_NAME` | which Agent to load |
+| `AGENTPLANE_CREDENTIALS_PATH` | when `spec.credentialRefs` is set — see _Credentials_ below |
 
 The runtime container then pulls its config from the Registry and hot-reloads on
 change (pull model — see the reference `--watch` mode below). The Deployment is
 owned by the Agent, so deleting the Agent garbage-collects the runtime.
 `status.runtimeAvailableReplicas` reflects availability.
+
+### Volumes (`spec.runtime.volumes`)
+
+An Agent reaches storage the control plane knows nothing about — a NAS share, a
+ConfigMap of settings, a scratch disk — by declaring it:
+
+```yaml
+spec:
+  runtime:
+    image: myorg/assistant:v1
+    volumes:
+      - name: nas
+        mountPath: /mnt/nas
+        readOnly: true
+        persistentVolumeClaim: {claimName: nas-share}
+      - name: settings
+        mountPath: /etc/assistant
+        configMap: {name: assistant-config}
+      - name: scratch
+        mountPath: /scratch
+        emptyDir: {sizeLimit: 1Gi}
+```
+
+Volume and mount are one entry, not two lists matched by name: an Agent volume
+goes into exactly one container, so the split would only allow the mistake it
+exists to permit.
+
+**The sources are a subset of the pod API, and `hostPath` is not in it.** A
+runtime executing model-directed shell commands runs under a read-only root
+filesystem, dropped capabilities and a non-root uid; one `hostPath` mount steps
+around all of it. An external filesystem belongs behind a PersistentVolumeClaim
+— bind NFS/CIFS/a cloud disk with the cluster's usual storage machinery, and its
+credentials stay in the PersistentVolume rather than in an Agent that anyone with
+namespace read access can see. Inline `nfs` and `csi` sources were left out for
+the same reason.
+
+**Mounting volumes also sandboxes the container** (non-root, no capabilities,
+read-only root filesystem), on the same argument as §14: the runtime runs
+commands a model chose. The single-replica pinning is *not* applied — that
+follows from a workspace's ReadWriteOnce claim, and would silently cap an Agent
+whose own volumes are read-only or ReadWriteMany.
+
+A volume may not take a name or mount path the Operator manages (`workspace`,
+`tmp`, `git-credential`, `model-credential`, the `credential-` prefix, `/tmp`,
+`/var/run/agentplane/*`, or `spec.workspace.mountPath`). That is rejected at
+apply time rather than resolved silently, because a shadowing mount fails as an
+empty checkout or a wrong token — a long way from the declaration at fault.
+
+### Credentials (`spec.credentialRefs`)
+
+For the things Agent Plane does not model — an IM app secret, a home automation
+token, a vendor API key:
+
+```yaml
+spec:
+  credentialRefs:
+    - name: lark-app
+    - name: vendor-api
+```
+
+Each Credential's Secret is mounted read-only at
+`$AGENTPLANE_CREDENTIALS_PATH/<credential-name>/`, one file per key — so the
+example above yields `/var/run/agentplane/credentials/lark-app/app-id` and
+`…/lark-app/app-secret`. A subdirectory each, unlike the Trigger's single flat
+directory (§13), because an Agent may hold several credentials whose key names
+collide.
+
+> **Mounting does not hide the secret from the model.** It keeps the value out
+> of `kubectl describe pod`, out of the process environment, and out of the
+> children the agent spawns — which is where secrets leak by accident. But a
+> runtime that executes model-directed shell commands can read the file, exactly
+> as it could read an environment variable. This narrows accidental exposure; it
+> is not a boundary against the agent itself. An Agent that must *not* hold a
+> credential should reach the capability through a `Tool` whose MCP server holds
+> it instead — that is what `config/samples/coding/lark-mcp.yaml` does.
+
+A missing Credential leaves the Agent `Degraded` with `ReferenceNotFound` and
+converges when it appears, like any other reference.
 
 **Reference runtime image.** `cmd/agent-runtime` has a long-running `--watch`
 mode (the container default) that subscribes to the Registry, reads the Secret
@@ -498,6 +594,22 @@ spec:
     port: 8080
 ```
 
+> **`spec.workspace` is a persistent working directory; the repository is
+> optional.** Everything it carries — a provisioned volume, a writable durable
+> `HOME` on it, and the sandbox described below — is useful to any agent that
+> keeps state, not just one holding a checkout. Omit `repository` and the
+> directory simply starts empty:
+>
+> ```yaml
+> spec:
+>   workspace: {size: 5Gi}     # a durable scratch directory, no git
+>   runtime: {image: myorg/assistant:v1}
+> ```
+>
+> `branch` and `credentialRef` only describe a clone, so setting either without
+> a `repository` is rejected at apply time rather than silently ignored. The
+> rest of this section is about the repository-bound case.
+
 The Operator provisions a PersistentVolumeClaim, clones into it with an init
 container, and mounts it at `spec.workspace.mountPath` (default `/workspace`).
 The checkout, its branches, and any build cache survive pod restarts — the clone
@@ -570,43 +682,91 @@ Worked example: `config/samples/coding/repo-agents.yaml`.
 
 ### Adapting a coding agent
 
-Coding agents (Claude Code, Codex, OpenCode) are CLIs, not HTTP servers, and they
-accept no injected system prompt or tool list. The way to run one here is
-**projection**: a thin shell writes the Registry config into the files the CLI
-already reads on startup, and execs it per turn. Nothing in the CLI is patched.
+Coding agents are not HTTP servers and accept no injected system prompt or tool
+list, so the way to run one here is **projection**: write the Registry's config
+into whatever the agent already reads, without patching the agent itself.
 
-A shell doing this has two jobs:
+Where that projection *runs* depends on the agent. Two shapes:
 
-- **Projection.** Write the Agent's `promptRef`, Skills, and mcp Tools (including
-  peer Agents) into whatever the CLI reads — an instructions file and an MCP
-  config, typically — on startup and again on every hot reload.
-- **A turn.** Serve `POST /api/chat` (§runtime protocol), exec the CLI, and map
-  the caller's `sessionId` to the CLI's own session so follow-ups resume rather
-  than start cold. Serialize turns: one working tree, one writer.
+**A plugin, in-process** — the shape `Dockerfile.coding-agent` uses, with
+opencode. opencode loads plugins from `.opencode/plugin` and gives them a
+`config` hook that fires while the plugin loads, whose mutations reach the live
+server. So a plugin can fetch the Registry, inject the model provider,
+credentials, MCP servers and permissions, and be finished before the first turn.
+No sidecar, no `/api/chat` translation, and the inbound platform connection can
+live in the same process (§Talking to it from an IM client).
 
-Two limits are worth knowing before choosing this shape:
+> **The plugin lives in its own repository, and must be published before the
+> image can be built anywhere but a laptop.** `Dockerfile.coding-agent` installs
+> it by version; with nothing published, that install 404s and the image build
+> fails in CI while succeeding locally, because a local build passes
+> `--build-arg PLUGIN_TARBALL=…` and points npm at a tarball instead. Publish the
+> version, then build — the `PLUGIN_TARBALL` path is for testing a change before
+> publishing it, not for releases.
 
-- **Skills usually cannot be disclosed on demand.** A CLI with no `load_skill`
-  tool cannot fetch a Skill body mid-turn, so the catalog approach §11 describes
-  does not apply — every mounted Skill rides along in each turn's context. Prefer
-  a few focused Skills over many broad ones.
-- **ToolPolicy governs declared Tools, not the CLI's built-ins.** `Bash`,
-  `Write`, and friends are not Tool CRs, so a ToolPolicy says nothing about them,
-  and `maxCallsPerSession` typically has no CLI equivalent. A shell should **log
-  each unenforceable rule at startup** rather than letting a policy look applied
-  when half of it is inert.
-- **Permission prompts have no one to answer them.** A CLI that asks before
-  writing will find no human at a terminal; depending on the tool it either
-  denies silently or stalls. Check how yours behaves headlessly *before* building
-  on it — a runtime that reports success while every write was refused is worse
-  than one that fails outright.
+**A shell, out-of-process** — for a CLI with no plugin system. The shell writes
+the config files, serves `POST /api/chat` (§runtime protocol), execs the CLI per
+turn, and maps the caller's `sessionId` to the CLI's own session so follow-ups
+resume rather than start cold. Serialize turns: one working tree, one writer.
+
+Whichever shape, three things are worth knowing before you build on it:
+
+- **A writable, durable `HOME` is required, and where it points matters.** A
+  workspace pod's root filesystem is read-only, and coding agents keep real state
+  (session history, caches, resolved plugin dependencies). The Operator points
+  `HOME` at a directory on the working tree's volume, so that state survives a
+  restart — a conversation resumes after the pod is rescheduled instead of
+  starting over. `/tmp` is writable too, but it is an emptyDir: every restart
+  would forget everything.
+- **Anything the agent fetches on first run must be baked into the image.** A
+  cluster with no egress to npm or a model catalog will *hang* during startup
+  rather than fail, which is much harder to diagnose than an error.
+  `Dockerfile.coding-agent` pre-installs the plugin's dependencies and the model
+  catalog for exactly this reason.
+- **`1/1 Running` is not evidence that it works, so a workspace runtime gets a
+  readiness probe by default.** A projecting runtime binds its port and answers a
+  health endpoint *before* it has fetched anything, so a failed projection — an
+  unreachable Registry, a plugin that did not load, a config hook that threw —
+  looks exactly like a healthy pod while every request hangs. The default probe
+  therefore does not check liveness; it asks for the runtime's own config and
+  requires the projected model to be in it, which is only true once projection
+  succeeded. Two things follow. A slow first start is not a failure, so
+  `failureThreshold` is deliberately generous (a cold volume may spend minutes
+  fetching a model catalog). And because opencode reads config only at startup,
+  a pod that failed to project **never recovers on its own** — restoring the
+  Registry does not fix it; the pod has to be replaced. Readiness staying false
+  is the correct report of that, not an over-strict probe. Override with
+  `spec.runtime.readinessProbe` for a runtime that exposes a better signal.
+- **ToolPolicy governs declared Tools, not the agent's built-ins.** `bash`,
+  `edit`, and friends are not Tool CRs, so a ToolPolicy says nothing about them,
+  and `maxCallsPerSession` has no equivalent. Neither does a Skill's
+  `allowedTools`, nor a `type: http` Tool. **Log each unenforceable rule at
+  startup** rather than letting a policy look applied when half of it is inert.
+
+**Permission prompts do have someone to answer them now.** This used to be the
+warning here: a CLI that asks before writing finds no human at a terminal and
+either denies silently or stalls. With the plugin shape the asker and the
+answerer are wired together — opencode blocks the turn and emits a permission
+request, the plugin renders it into the chat, and the user's answer releases the
+turn. The model's work up to the question is resumed, not redone. Skills are
+similar: opencode reads them from a skill directory on demand, so the
+progressive-disclosure property §11 describes survives projection.
 
 ### Talking to it from an IM client
 
-Combine this with a `Trigger` (§13) and a repository's agent becomes reachable
-from Lark or DingTalk. One caveat: the adapter contract expects the runtime to
-serve `POST /api/chat`, and a coding CLI is not an HTTP server — the shell above
-wraps it. That wrapper is the image's business; the contract does not change.
+For a plain Agent, a `Trigger` (§13) brings messages in and the adapter contract
+holds unchanged.
+
+For a **workspace** Agent running the plugin shape, there is no Trigger and no
+adapter pod: the plugin holds the platform connection itself, inside the pod that
+runs the model. That is what makes the approval loop work end to end — the thing
+that blocks the turn and the thing that shows the user a button are the same
+process.
+
+The tradeoff is explicit. One moving part instead of two, and a real approval
+loop; in exchange, the platform is no longer swappable by changing a Trigger
+image. Adding DingTalk or Slack means another plugin rather than another Trigger.
+Worked example: `config/samples/coding/lark-coding-agent.yaml`.
 
 ---
 

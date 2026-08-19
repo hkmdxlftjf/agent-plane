@@ -67,6 +67,43 @@ spec:
                 required:
                 - name
                 type: object
+              credentialRefs:
+                description: |-
+                  credentialRefs lists Credentials the runtime needs for things Agent Plane
+                  does not model — an IM app secret, a home automation token, a vendor API
+                  key. Each one's Secret is mounted as files under
+                  $AGENTPLANE_CREDENTIALS_PATH/<credential-name>/, one file per key.
+
+                  This exists because the alternative was spec.runtime.env with a
+                  secretKeyRef, and the two are not equivalent. An environment value is
+                  visible in `kubectl describe pod`, is inherited by every child process the
+                  agent spawns, and tends to end up in logs and crash dumps. A file is none
+                  of those.
+
+                  What it does NOT do is hide the value from the model. A runtime that
+                  executes model-directed shell commands can read the file, exactly as it
+                  could read the environment. Mounting narrows where the secret leaks by
+                  accident; it is not a boundary against the agent itself. An Agent that must
+                  not hold a credential should reach the capability through a Tool whose MCP
+                  server holds it instead.
+
+                  A missing Credential leaves the Agent Degraded with ReferenceNotFound, the
+                  same as any other unresolved reference.
+                items:
+                  description: |-
+                    LocalReference points at another Agent Plane resource by name, in the same
+                    namespace as the referring object. This is the primary composition primitive:
+                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                  properties:
+                    name:
+                      description: name is the metadata.name of the referenced resource.
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               description:
                 description: description is a human-readable summary of the agent's
                   purpose.
@@ -351,6 +388,170 @@ spec:
                     maximum: 65535
                     minimum: 1
                     type: integer
+                  readinessProbe:
+                    description: |-
+                      readinessProbe overrides how readiness is decided for this runtime.
+
+                      Set it when "the process is listening" and "the agent can answer" are not
+                      the same thing — which is the common case for a runtime that does work at
+                      startup. A runtime that fetches config, resolves plugins, or opens an
+                      upstream connection can bind its port, answer a trivial health endpoint,
+                      and still hang on every real request; without a probe that distinguishes
+                      the two, Kubernetes reports 1/1 Running and the failure is invisible.
+
+                      Left unset, a workspace-bound runtime gets a default probe (see
+                      defaultWorkspaceReadinessProbe in internal/controller) and any other
+                      runtime gets none — an Agent that only serves /api/chat is ready as soon as
+                      it listens.
+                    properties:
+                      exec:
+                        description: Exec specifies a command to execute in the container.
+                        properties:
+                          command:
+                            description: |-
+                              Command is the command line to execute inside the container, the working directory for the
+                              command  is root ('/') in the container's filesystem. The command is simply exec'd, it is
+                              not run inside a shell, so traditional shell instructions ('|', etc) won't work. To use
+                              a shell, you need to explicitly call out to that shell.
+                              Exit status of 0 is treated as live/healthy and non-zero is unhealthy.
+                            items:
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
+                        type: object
+                      failureThreshold:
+                        description: |-
+                          Minimum consecutive failures for the probe to be considered failed after having succeeded.
+                          Defaults to 3. Minimum value is 1.
+                        format: int32
+                        type: integer
+                      grpc:
+                        description: GRPC specifies a GRPC HealthCheckRequest.
+                        properties:
+                          port:
+                            description: Port number of the gRPC service. Number must
+                              be in the range 1 to 65535.
+                            format: int32
+                            type: integer
+                          service:
+                            default: ""
+                            description: |-
+                              Service is the name of the service to place in the gRPC HealthCheckRequest
+                              (see https://github.com/grpc/grpc/blob/master/doc/health-checking.md).
+
+                              If this is not specified, the default behavior is defined by gRPC.
+                            type: string
+                        required:
+                        - port
+                        type: object
+                      httpGet:
+                        description: HTTPGet specifies an HTTP GET request to perform.
+                        properties:
+                          host:
+                            description: |-
+                              Host name to connect to, defaults to the pod IP. You probably want to set
+                              "Host" in httpHeaders instead.
+                            type: string
+                          httpHeaders:
+                            description: Custom headers to set in the request. HTTP
+                              allows repeated headers.
+                            items:
+                              description: HTTPHeader describes a custom header to
+                                be used in HTTP probes
+                              properties:
+                                name:
+                                  description: |-
+                                    The header field name.
+                                    This will be canonicalized upon output, so case-variant names will be understood as the same header.
+                                  type: string
+                                value:
+                                  description: The header field value
+                                  type: string
+                              required:
+                              - name
+                              - value
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          path:
+                            description: Path to access on the HTTP server.
+                            type: string
+                          port:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: |-
+                              Name or number of the port to access on the container.
+                              Number must be in the range 1 to 65535.
+                              Name must be an IANA_SVC_NAME.
+                            x-kubernetes-int-or-string: true
+                          scheme:
+                            description: |-
+                              Scheme to use for connecting to the host.
+                              Defaults to HTTP.
+                            type: string
+                        required:
+                        - port
+                        type: object
+                      initialDelaySeconds:
+                        description: |-
+                          Number of seconds after the container has started before liveness probes are initiated.
+                          More info: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle#container-probes
+                        format: int32
+                        type: integer
+                      periodSeconds:
+                        description: |-
+                          How often (in seconds) to perform the probe.
+                          Default to 10 seconds. Minimum value is 1.
+                        format: int32
+                        type: integer
+                      successThreshold:
+                        description: |-
+                          Minimum consecutive successes for the probe to be considered successful after having failed.
+                          Defaults to 1. Must be 1 for liveness and startup. Minimum value is 1.
+                        format: int32
+                        type: integer
+                      tcpSocket:
+                        description: TCPSocket specifies a connection to a TCP port.
+                        properties:
+                          host:
+                            description: 'Optional: Host name to connect to, defaults
+                              to the pod IP.'
+                            type: string
+                          port:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: |-
+                              Number or name of the port to access on the container.
+                              Number must be in the range 1 to 65535.
+                              Name must be an IANA_SVC_NAME.
+                            x-kubernetes-int-or-string: true
+                        required:
+                        - port
+                        type: object
+                      terminationGracePeriodSeconds:
+                        description: |-
+                          Optional duration in seconds the pod needs to terminate gracefully upon probe failure.
+                          The grace period is the duration in seconds after the processes running in the pod are sent
+                          a termination signal and the time when the processes are forcibly halted with a kill signal.
+                          Set this value longer than the expected cleanup time for your process.
+                          If this value is nil, the pod's terminationGracePeriodSeconds will be used. Otherwise, this
+                          value overrides the value provided by the pod spec.
+                          Value must be non-negative integer. The value zero indicates stop immediately via
+                          the kill signal (no opportunity to shut down).
+                          This is a beta field and requires enabling ProbeTerminationGracePeriod feature gate.
+                          Minimum value is 1. spec.terminationGracePeriodSeconds is used if unset.
+                        format: int64
+                        type: integer
+                      timeoutSeconds:
+                        description: |-
+                          Number of seconds after which the probe times out.
+                          Defaults to 1 second. Minimum value is 1.
+                          More info: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle#container-probes
+                        format: int32
+                        type: integer
+                    type: object
                   replicas:
                     default: 1
                     description: replicas is the desired number of runtime pods.
@@ -416,6 +617,18 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
+                  runtimeClassName:
+                    description: |-
+                      runtimeClassName selects a container runtime for the pod, e.g. "gvisor"
+                      for a syscall-intercepting sandbox.
+
+                      Worth setting when the Agent runs code you do not trust: a coding agent
+                      executes model-directed shell commands, and the container-level sandbox the
+                      Operator applies (read-only root filesystem, no capabilities, non-root)
+                      is enforced by the host kernel. A sandboxed runtime raises the cost of a
+                      kernel escape, at some latency. The named RuntimeClass must already exist
+                      in the cluster; naming one that does not leaves pods Pending.
+                    type: string
                   serviceAccountName:
                     description: |-
                       serviceAccountName is the ServiceAccount the runtime pods run as.
@@ -428,6 +641,161 @@ spec:
                       the namespace too. Naming a dedicated account here keeps the grant scoped to
                       this runtime.
                     type: string
+                  volumes:
+                    description: |-
+                      volumes are extra volumes mounted into the runtime container: a NAS share
+                      through its PersistentVolumeClaim, a ConfigMap of settings, a Secret of
+                      API keys, a scratch directory.
+
+                      This is what lets an Agent reach something the control plane knows nothing
+                      about, without a new field per storage kind. spec.workspace remains the
+                      agent's own working directory; these are everything else.
+
+                      The volume sources are a deliberate subset of the pod API rather than all
+                      of it, and hostPath is the notable omission: a workspace runtime runs
+                      model-directed shell commands under a read-only root filesystem, dropped
+                      capabilities and a non-root uid, and one hostPath mount would step around
+                      all of it. An external filesystem belongs behind a PersistentVolumeClaim,
+                      which is also where its credentials stay.
+
+                      A volume may not reuse a name or a mount path the Operator already uses
+                      (workspace, tmp, git-credential, model-credential, and the credential
+                      directory) — that is rejected at apply time rather than resolved silently,
+                      since a mount that shadows one of those fails in ways that look like
+                      anything but a name collision.
+                    items:
+                      description: |-
+                        AgentVolume is one extra volume mounted into the runtime container, declared
+                        as the volume and its mount together.
+
+                        Kubernetes splits these into two lists matched by name; keeping them as one
+                        entry removes the failure that split invites — a volume with no mount, or a
+                        mount naming a volume that is not there. An Agent volume goes into exactly one
+                        container, so there is nothing the split would buy.
+
+                        Exactly one source must be set. The set is deliberately smaller than the pod
+                        API's: see spec.runtime.volumes for why hostPath is not in it.
+                      properties:
+                        configMap:
+                          description: configMap mounts a ConfigMap's keys as files.
+                          properties:
+                            name:
+                              description: name is the ConfigMap or Secret in this
+                                namespace.
+                              minLength: 1
+                              type: string
+                            optional:
+                              description: |-
+                                optional lets the pod start when the object does not exist yet. Left false,
+                                the pod stays Pending until it appears, which is usually what you want:
+                                starting an agent without the configuration it was given is rarely better
+                                than waiting for it.
+                              type: boolean
+                          required:
+                          - name
+                          type: object
+                        emptyDir:
+                          description: |-
+                            emptyDir is scratch space that lives as long as the pod. Useful under a
+                            read-only root filesystem, where a build or a download needs somewhere to
+                            land that is not the working directory.
+                          properties:
+                            medium:
+                              description: |-
+                                medium set to "Memory" backs the volume with a tmpfs, which counts against
+                                the container's memory limit.
+                              enum:
+                              - ""
+                              - Memory
+                              type: string
+                            sizeLimit:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              description: |-
+                                sizeLimit caps the volume, e.g. "1Gi". Worth setting: an unbounded
+                                emptyDir on the node's filesystem is evicted only once the node is already
+                                under disk pressure.
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                          type: object
+                        mountPath:
+                          description: |-
+                            mountPath is the absolute path the volume appears at in the runtime
+                            container.
+                          minLength: 1
+                          type: string
+                        name:
+                          description: |-
+                            name identifies the volume within the pod. Must not collide with a volume
+                            the Operator manages.
+                          maxLength: 63
+                          minLength: 1
+                          type: string
+                        persistentVolumeClaim:
+                          description: |-
+                            persistentVolumeClaim mounts an existing PVC by name. This is how an
+                            external filesystem — NFS, CIFS, a NAS share, a cloud disk — reaches the
+                            agent: bind it to a PVC with the cluster's usual storage machinery, and any
+                            credentials it needs stay in the PersistentVolume rather than in this
+                            resource.
+                          properties:
+                            claimName:
+                              description: |-
+                                claimName is the PersistentVolumeClaim in this namespace. It must already
+                                exist — the Operator provisions a claim for spec.workspace, but never for
+                                one declared here.
+                              minLength: 1
+                              type: string
+                          required:
+                          - claimName
+                          type: object
+                        readOnly:
+                          description: |-
+                            readOnly mounts the volume read-only.
+
+                            Worth setting for anything the agent only needs to read. The runtime may be
+                            executing shell commands a model chose, and a read-only mount is enforced
+                            by the kernel rather than by the agent deciding to behave.
+                          type: boolean
+                        secret:
+                          description: |-
+                            secret mounts a Secret's keys as files.
+
+                            Note what this does and does not do: it keeps the value out of the pod's
+                            environment and out of `kubectl describe pod`, but a runtime that executes
+                            model-directed shell commands can still read the file. See
+                            spec.credentialRefs, which is the same mechanism with the Credential
+                            indirection the rest of Agent Plane uses.
+                          properties:
+                            name:
+                              description: name is the ConfigMap or Secret in this
+                                namespace.
+                              minLength: 1
+                              type: string
+                            optional:
+                              description: |-
+                                optional lets the pod start when the object does not exist yet. Left false,
+                                the pod stays Pending until it appears, which is usually what you want:
+                                starting an agent without the configuration it was given is rarely better
+                                than waiting for it.
+                              type: boolean
+                          required:
+                          - name
+                          type: object
+                      required:
+                      - mountPath
+                      - name
+                      type: object
+                      x-kubernetes-validations:
+                      - message: exactly one of persistentVolumeClaim, configMap,
+                          secret or emptyDir must be set
+                        rule: '[has(self.persistentVolumeClaim), has(self.configMap),
+                          has(self.secret), has(self.emptyDir)].exists_one(x, x)'
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
                 required:
                 - image
                 type: object
@@ -520,16 +888,23 @@ spec:
                 type: object
               workspace:
                 description: |-
-                  workspace binds this Agent to one source repository. The Operator clones it
-                  into a persistent volume the runtime pod mounts, so a coding agent
-                  (Claude Code, Codex, OpenCode, …) has a working tree that survives
-                  restarts.
+                  workspace gives this Agent a persistent working directory: a volume the
+                  Operator provisions and the runtime pod mounts, so whatever the agent
+                  accumulates — files it writes, caches it builds, the conversation history a
+                  runtime keeps under HOME — survives a restart.
 
-                  One Agent owns one repository. Cross-repository work is expressed by
-                  referencing another Agent as a Tool rather than by mounting a second repo:
-                  see spec.expose. That keeps each working tree single-writer, and makes the
-                  dependency between repositories a declared, policeable edge instead of a
-                  shared mount.
+                  Set repository to populate it from git, which is what a coding agent
+                  (Claude Code, Codex, OpenCode, …) needs. Leave it unset and the directory
+                  starts empty: an assistant that files notes, caches what it fetched, or
+                  simply needs somewhere writable gets the same durable volume, and the same
+                  sandbox around it, without pretending to own a repository.
+
+                  Either way the volume has exactly one writer, so the runtime Deployment is
+                  pinned to a single replica. For a repository-bound Agent, cross-repository
+                  work is expressed by referencing another Agent as a Tool rather than by
+                  mounting a second repo: see spec.expose. That keeps each working tree
+                  single-writer, and makes the dependency between repositories a declared,
+                  policeable edge instead of a shared mount.
                 properties:
                   branch:
                     description: branch to check out. Defaults to the repository's
@@ -554,8 +929,13 @@ spec:
                       runtime container.
                     type: string
                   repository:
-                    description: repository is the clone URL (https or ssh).
-                    minLength: 1
+                    description: |-
+                      repository is the clone URL (https or ssh) to populate the working
+                      directory from. Omit it for a working directory that starts empty.
+
+                      branch and credentialRef only mean anything alongside it — there is
+                      nothing to check out or authenticate against without a repository, so
+                      setting either one alone is rejected rather than silently ignored.
                     type: string
                   size:
                     default: 10Gi
@@ -567,8 +947,6 @@ spec:
                       storageClassName selects the StorageClass for the working tree. Omit to
                       use the cluster default.
                     type: string
-                required:
-                - repository
                 type: object
             type: object
           status:

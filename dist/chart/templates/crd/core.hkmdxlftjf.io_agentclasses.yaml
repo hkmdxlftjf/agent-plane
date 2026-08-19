@@ -90,6 +90,66 @@ spec:
                 required:
                 - name
                 type: object
+              defaultSkillRefs:
+                description: |-
+                  defaultSkillRefs are applied when an Agent of this class declares no
+                  skillRefs of its own, for the same reason as defaultToolRefs: a role's
+                  instruction packs describe the role.
+                items:
+                  description: |-
+                    LocalReference points at another Agent Plane resource by name, in the same
+                    namespace as the referring object. This is the primary composition primitive:
+                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                  properties:
+                    name:
+                      description: name is the metadata.name of the referenced resource.
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              defaultToolPolicyRefs:
+                description: |-
+                  defaultToolPolicyRefs are applied when an Agent of this class declares no
+                  toolPolicyRefs of its own.
+                items:
+                  description: |-
+                    LocalReference points at another Agent Plane resource by name, in the same
+                    namespace as the referring object. This is the primary composition primitive:
+                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                  properties:
+                    name:
+                      description: name is the metadata.name of the referenced resource.
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              defaultToolRefs:
+                description: |-
+                  defaultToolRefs are applied when an Agent of this class declares no
+                  toolRefs of its own. A role's tools belong to the role, not to each
+                  individual Agent — a "tester" class can carry the tools testing needs so
+                  every Agent of that class gets them without repeating the list.
+                items:
+                  description: |-
+                    LocalReference points at another Agent Plane resource by name, in the same
+                    namespace as the referring object. This is the primary composition primitive:
+                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                  properties:
+                    name:
+                      description: name is the metadata.name of the referenced resource.
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               defaultWorkflowRef:
                 description: defaultWorkflowRef is applied when an Agent omits a workflowRef.
                 properties:

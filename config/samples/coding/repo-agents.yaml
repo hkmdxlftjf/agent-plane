@@ -17,8 +17,10 @@
 #   kubectl create secret generic git-token --from-literal=token=ghp_xxx
 #
 # NOT runnable as-is: your-coding-agent:latest is a placeholder. Supply an image
-# that speaks the runtime protocol (docs/runtime-protocol.md); for a CLI-based
-# coding agent that means a shell that projects config into the files it reads.
+# that projects the Registry's config into whatever the coding agent reads
+# (docs/usage.md §14). Dockerfile.coding-agent builds one such image — opencode
+# plus a plugin that does the projection in-process — and is ready to point
+# runtime.image at.
 apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Credential
 metadata:

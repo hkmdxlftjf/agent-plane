@@ -3,7 +3,8 @@ name: Images
 # Build and publish the container images to the GitHub Container Registry
 # (ghcr.io). Uses the built-in GITHUB_TOKEN (packages: write) — no PAT needed.
 # Images land at ghcr.io/<owner>/{agent-plane,agent-plane-registry,
-# agent-plane-runtime,agent-plane-example-mcp,agent-plane-lark-adapter}.
+# agent-plane-runtime,agent-plane-example-mcp,agent-plane-coding-agent,
+# agent-plane-lark-mcp}.
 #
 # Adding an image is one matrix entry plus its Dockerfile; everything below is
 # shared.
@@ -34,8 +35,18 @@ jobs:
             dockerfile: Dockerfile.agent-runtime
           - image: agent-plane-example-mcp
             dockerfile: Dockerfile.example-mcp
-          - image: agent-plane-lark-adapter
-            dockerfile: Dockerfile.lark-adapter
+          # opencode plus the Agent Plane plugin: the runtime for Agents with
+          # spec.workspace. It replaces the separate Lark adapter image, which
+          # is no longer built — the platform connection now lives inside this
+          # one (see docs/usage.md §14).
+          - image: agent-plane-coding-agent
+            dockerfile: Dockerfile.coding-agent
+          # The official Feishu MCP server, packaged for the MCPServer CRD. Built
+          # here because config/samples/coding/lark-mcp.yaml names an image, and a
+          # sample that names an image only ever built on one laptop is a sample
+          # nobody else can run.
+          - image: agent-plane-lark-mcp
+            dockerfile: Dockerfile.lark-mcp
     steps:
       - name: Clone the code
         uses: actions/checkout@v4

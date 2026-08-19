@@ -1,0 +1,53 @@
+# The official Feishu MCP server, packaged so the MCPServer CRD can run it.
+#
+# The CRD deliberately has no command/args field — an MCP server image is
+# expected to start its server as its entrypoint — so the wrapper is here rather
+# than in the manifest. That also keeps the version pinned in one place.
+#
+# Why this exists at all: without it, an agent asked for a Feishu document has to
+# reach a credential to do the work. With it, the credential lives in this pod's
+# environment and the agent gets a tool endpoint. See
+# config/samples/coding/lark-mcp.yaml.
+FROM node:22-bookworm-slim
+ARG LARK_MCP_VERSION=0.5.1
+ARG NPM_REGISTRY=
+
+RUN set -eux; \
+    if [ -n "${NPM_REGISTRY}" ]; then npm config set registry "${NPM_REGISTRY}"; fi; \
+    npm install --global --no-audit --no-fund "@larksuiteoapi/lark-mcp@${LARK_MCP_VERSION}"; \
+    lark-mcp --version
+
+# Non-root: this pod holds a Feishu app secret and runs no user code.
+# The home directory must exist and be group-writable — lark-mcp creates state
+# under it on startup and exits with EACCES otherwise.
+RUN useradd --uid 10001 --gid 0 --create-home --shell /bin/sh mcp \
+    && chmod -R g+rwX /home/mcp
+USER 10001:0
+
+# --host 0.0.0.0 is required, not stylistic: the default binds to loopback, and
+# the pod would then pass its readiness check while being unreachable through the
+# Service — the failure looks like a broken tool rather than a broken listener.
+#
+# Credentials come from the environment (mounted from a Secret by the CRD's env)
+# rather than the command line, so they do not appear in `ps` or in the pod spec.
+#
+# tenant_access_token: the app acts as itself. user_access_token would let it act
+# as a person, which needs an interactive browser login and cannot be done by a
+# Deployment.
+# AGENTPLANE_ prefix, not LARK_MCP_PORT: Kubernetes injects
+# <SERVICE_NAME>_PORT=tcp://<ip>:<port> for every Service in the namespace, so a
+# Service named lark-mcp overwrites LARK_MCP_PORT with a URL. The server then
+# tries to bind that address and dies with EACCES.
+# Two libsecret warnings at startup are expected and harmless:
+#
+#   Failed to initialize encryption: libsecret-1.so.0: cannot open shared object file
+#
+# lark-mcp tries to keep user access tokens in an OS keyring, which a container has
+# no business having. It falls back to an in-memory store and says so. Irrelevant
+# here because --token-mode tenant_access_token stores no user token at all —
+# noted so the warning is not mistaken for the cause of a real failure.
+ENV AGENTPLANE_MCP_PORT=3000
+ENTRYPOINT ["sh", "-c", "exec lark-mcp mcp \
+  -a \"$LARK_APP_ID\" -s \"$LARK_APP_SECRET\" \
+  --token-mode tenant_access_token \
+  -m streamable --host 0.0.0.0 -p \"${AGENTPLANE_MCP_PORT}\""]

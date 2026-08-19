@@ -225,13 +225,16 @@ separate agent-to-agent permission model. Isolation is the default: an Agent
 with no peer Tool cannot reach any other.
 
 The runtime image is yours to supply: anything honoring
-[docs/runtime-protocol.md](docs/runtime-protocol.md) works. A coding agent
-(Claude Code, Codex, OpenCode) fits by _projection_ — a thin shell writes the
-Registry config into the files the CLI already reads on startup, rather than the
-CLI being patched to understand this platform.
+[docs/runtime-protocol.md](docs/runtime-protocol.md) works. A coding agent fits
+by _projection_ — the Registry's config is written into whatever the agent
+already reads, rather than the agent being patched to understand this platform.
+`Dockerfile.coding-agent` builds one: opencode, plus a plugin that projects the
+config in-process and can hold an IM connection alongside it, so an approval
+blocks the actual tool call instead of relying on the model to volunteer a pause.
 
-See **[docs/usage.md](docs/usage.md)** §14 and
-`config/samples/coding/repo-agents.yaml`.
+See **[docs/usage.md](docs/usage.md)** §14,
+`config/samples/coding/repo-agents.yaml`, and
+`config/samples/coding/lark-coding-agent.yaml`.
 
 ## Inbound events (`Trigger`)
 
