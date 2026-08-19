@@ -194,23 +194,25 @@ undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.
 
 ##@ Local kind cluster
 
-KIND_CLUSTER ?= agent-plane
+# Distinct from KIND_CLUSTER above (the throwaway e2e cluster): this is the
+# persistent local dev cluster managed by hack/kind-local.sh.
+LOCAL_KIND_CLUSTER ?= agent-plane
 
 .PHONY: kind-create
 kind-create: ## Create (or reuse) the dedicated local kind cluster.
-	KIND_CLUSTER=$(KIND_CLUSTER) ./hack/kind-local.sh create
+	KIND_CLUSTER=$(LOCAL_KIND_CLUSTER) ./hack/kind-local.sh create
 
 .PHONY: kind-delete
 kind-delete: ## Delete the dedicated local kind cluster.
-	KIND_CLUSTER=$(KIND_CLUSTER) ./hack/kind-local.sh delete
+	KIND_CLUSTER=$(LOCAL_KIND_CLUSTER) ./hack/kind-local.sh delete
 
 .PHONY: kind-images
 kind-images: ## Build and load operator + registry images into the kind cluster.
-	KIND_CLUSTER=$(KIND_CLUSTER) ./hack/kind-local.sh images
+	KIND_CLUSTER=$(LOCAL_KIND_CLUSTER) ./hack/kind-local.sh images
 
 .PHONY: deploy-kind
 deploy-kind: ## One-shot local deploy: kind + cert-manager + operator + registry (full webhook path).
-	KIND_CLUSTER=$(KIND_CLUSTER) ./hack/kind-local.sh deploy
+	KIND_CLUSTER=$(LOCAL_KIND_CLUSTER) ./hack/kind-local.sh deploy
 
 ##@ Dependencies
 
