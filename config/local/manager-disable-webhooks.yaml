@@ -1,0 +1,8 @@
+# Local overlay only: the manager runs without a webhook server (this overlay
+# ships no ValidatingWebhookConfiguration and no cert-manager), so instruct the
+# binary accordingly. Production (config/default) enables webhooks.
+- op: add
+  path: /spec/template/spec/containers/0/env
+  value:
+    - name: ENABLE_WEBHOOKS
+      value: "false"
