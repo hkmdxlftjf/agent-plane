@@ -124,6 +124,47 @@ test('render_trip: a minimal valid trip renders and is fetchable', () => withSer
   assert.match(fetched.body, /initTravelMap/);
 }));
 
+// A regression test for a real bug: the vendored engines were inlined via
+// require('../vendor/map.js').toString(), which stringifies the *module
+// object* ("[object Object]"), not the file's source text. The page-level
+// string checks above (e.g. /initTravelMap/) passed anyway, because that
+// name also appears in the call site and the GCJ-02 conversion snippet — so
+// the bug shipped a page whose fill-in script threw ReferenceError on load
+// and left every section empty. This test actually executes the inlined
+// <script> blocks in a vm sandbox and checks the engine functions are real
+// functions, which the string-only check could never catch.
+test('render_trip: the inlined engines are real, callable function definitions (not "[object Object]")', () => withServer(async (port) => {
+  const vm = require('node:vm');
+  const trip = {
+    title: '测试行程', startDate: '2026-09-01', disclaimer: '本页信息仅供参考，出行前请自行核实所有信息。',
+    reminders: [], days: [{ date: '2026-09-01', weekday: '周二', slots: [
+      { period: 'morning', name: '天安门', time: '09:00', lat: 39.9, lng: 116.4, rating: 4.8, review: '很好', needsBooking: false, leadDays: 0 },
+    ], dining: [] }],
+  };
+  const res = await rpc(port, 'tools/call', { name: 'render_trip', arguments: { trip } });
+  const out = JSON.parse(res.result.content[0].text);
+  const fetched = await get(port, '/artifacts/' + out.artifactId);
+
+  // Pull out the trip-data JSON block and the two inlined-engine <script>
+  // blocks (map.js, reminders.js) by their preceding comment markers.
+  const tripDataMatch = fetched.body.match(/<script id="trip-data"[^>]*>([\s\S]*?)<\/script>/);
+  const mapScript = fetched.body.match(/<script>\/\*map\.js\*\/([\s\S]*?)<\/script>/);
+  const remindersScript = fetched.body.match(/<script>\/\*reminders\.js\*\/([\s\S]*?)<\/script>/);
+  assert.ok(tripDataMatch, 'trip-data block must be present');
+  assert.ok(mapScript, 'map.js inline block must be present');
+  assert.ok(remindersScript, 'reminders.js inline block must be present');
+  assert.doesNotMatch(mapScript[1], /\[object Object\]/, 'map.js must be real source, not a stringified module object');
+  assert.doesNotMatch(remindersScript[1], /\[object Object\]/, 'reminders.js must be real source, not a stringified module object');
+
+  const sandbox = { document: { getElementById: () => null }, window: {} };
+  vm.createContext(sandbox);
+  vm.runInContext(mapScript[1] + '\n' + remindersScript[1], sandbox);
+  assert.equal(typeof sandbox.initTravelMap, 'function', 'initTravelMap must be defined by the inlined map.js');
+  assert.equal(typeof sandbox.gcj02ToWgs84, 'function', 'gcj02ToWgs84 must be defined by the inlined map.js');
+  assert.equal(typeof sandbox.computeReminders, 'function', 'computeReminders must be defined by the inlined reminders.js');
+  assert.equal(typeof sandbox.renderChecklistHTML, 'function', 'renderChecklistHTML must be defined by the inlined reminders.js');
+}));
+
 test('check_urls: reports a live and a dead URL', () => withServer(async (port) => {
   const res = await rpc(port, 'tools/call', {
     name: 'check_urls',

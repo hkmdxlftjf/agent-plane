@@ -9,7 +9,18 @@
 // model's context: the chat UI fetches it by id from /artifacts/:id.
 'use strict';
 
+const path = require('node:path');
+const fs = require('node:fs');
 const validate = require('../vendor/validate.js');
+
+// Source text of the vendored engines, to be inlined verbatim into the
+// rendered page's <script> blocks. Read as a file, not require()'d — a
+// require() gives back the module's *exports object*; String(exports) is
+// "[object Object]", not the file's source, so an earlier version of this
+// silently shipped pages whose fill-in script threw ReferenceError on load
+// (see the regression test in test/server.test.js).
+const MAP_JS_SOURCE = fs.readFileSync(path.join(__dirname, '..', 'vendor', 'map.js'), 'utf8');
+const REMINDERS_JS_SOURCE = fs.readFileSync(path.join(__dirname, '..', 'vendor', 'reminders.js'), 'utf8');
 
 const name = 'render_trip';
 const description = [
@@ -108,9 +119,9 @@ ${css}
 </div>
 <script id="trip-data" type="application/json">${json}</script>
 <script>/*map.js*/
-${require('../vendor/map.js').toString().replace(/^[\s\S]*?\n/, '')}</script>
+${MAP_JS_SOURCE}</script>
 <script>/*reminders.js*/
-${require('../vendor/reminders.js').toString().replace(/^[\s\S]*?\n/, '')}</script>
+${REMINDERS_JS_SOURCE}</script>
 <script>${convertSnippet}</script>
 <script>
 (function(){
@@ -144,7 +155,7 @@ ${require('../vendor/reminders.js').toString().replace(/^[\s\S]*?\n/, '')}</scri
       (day.theme ? ' · ' + esc(day.theme) : '') + '</div>';
     (day.slots || []).forEach(function(s){
       html += '<div class="slot">' +
-        (s.photo ? '<img loading="lazy" src="' + esc(s.photo) + '" alt="" onerror="this.style.visibility=\'hidden\'">' : '') +
+        (s.photo ? '<img loading="lazy" src="' + esc(s.photo) + '" alt="" onerror="this.style.visibility=\\'hidden\\'">' : '') +
         '<div class="b"><div class="nm">' + esc(s.name) + (s.needsBooking ? reminderBadgeHTML(s.leadDays) : '') + '</div>' +
         '<div class="meta">' + esc(periodName[s.period] || '') + ' ' + esc(s.time || '') +
         (typeof s.rating === 'number' ? ' · <span class="rating">★ ' + s.rating + '</span>' : '') + '</div>' +
