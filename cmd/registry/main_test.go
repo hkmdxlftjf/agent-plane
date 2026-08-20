@@ -18,14 +18,18 @@ package main
 
 import (
 	"context"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	sdk "github.com/hkmdxlftjf/agent-plane-sdk-go"
 
 	corev1alpha1 "github.com/hkmdxlftjf/agent-plane/api/v1alpha1"
 )
@@ -390,5 +394,63 @@ func TestResolveToolPeerWithoutEndpoint(t *testing.T) {
 	}
 	if got.Endpoint != "" {
 		t.Errorf("Endpoint = %q, want empty", got.Endpoint)
+	}
+}
+
+// waitForSubscriber polls until the hub has at least one subscriber for key.
+func waitForSubscriber(t *testing.T, h *hub, key string) {
+	t.Helper()
+	for i := 0; i < 1000; i++ {
+		if h.subscriberCount(key) > 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("no subscriber registered in time")
+}
+
+// A /watch client must receive exactly the snapshot plus newer frames:
+// a duplicate of the snapshot's resourceVersion and a regressed (older-cache)
+// frame are both dropped, so a client can never roll back to older config.
+func TestWatchDropsDuplicateAndRegressionFrames(t *testing.T) {
+	agent := &corev1alpha1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Namespace: testNS, Name: "watched", ResourceVersion: "5"},
+	}
+	s := testServer(t, agent)
+	s.hub = newHub()
+
+	rec := httptest.NewRecorder()
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest("GET", "/v1/agents/"+testNS+"/watched/watch", nil).WithContext(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.handleWatch(rec, req, testNS, "watched")
+	}()
+
+	key := testNS + "/watched"
+	waitForSubscriber(t, s.hub, key)
+
+	// Informer replay of the snapshot object, a stale-cache frame, then a real update.
+	s.hub.broadcast(key, "5", sdk.AgentConfig{ConfigHash: "dup"})
+	s.hub.broadcast(key, "4", sdk.AgentConfig{ConfigHash: "stale"})
+	s.hub.broadcast(key, "6", sdk.AgentConfig{ConfigHash: "fresh"})
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	body := rec.Body.String()
+	if n := strings.Count(body, `"configHash":"fresh"`); n != 1 {
+		t.Errorf("newer frame must be delivered exactly once, got %d in body: %s", n, body)
+	}
+	if strings.Contains(body, `"configHash":"stale"`) {
+		t.Error("a frame older than the snapshot must be dropped, not delivered")
+	}
+	if n := strings.Count(body, `"configHash":"dup"`); n != 0 {
+		t.Errorf("duplicate of the snapshot frame must be dropped, got %d in body: %s", n, body)
+	}
+	if !strings.Contains(body, `"configHash":""`) && !strings.Contains(body, "data:") {
+		t.Error("initial snapshot must be sent")
 	}
 }
