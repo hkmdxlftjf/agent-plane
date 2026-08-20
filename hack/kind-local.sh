@@ -65,6 +65,23 @@ cmd_images() {
   echo ">>> loading images into kind"
   kindctl load docker-image "$IMG" --name "$KIND_CLUSTER"
   kindctl load docker-image "$REGISTRY_IMG" --name "$KIND_CLUSTER"
+  check_distinct_images "$IMG" "$REGISTRY_IMG"
+}
+
+# kind+podman known issue: if a re-tag races (see kind's "already present but
+# missing the tag, re-tagging..." log line) two distinct images can end up
+# sharing one node-side image ID — the container that starts is whichever
+# image "won", silently. Cheap to catch: compare crictl's reported IDs.
+check_distinct_images() {
+  detect_provider
+  local ids
+  ids="$(docker exec "${KIND_CLUSTER}-control-plane" crictl images 2>/dev/null | \
+    awk -v a="${1%%:*}" -v b="${2%%:*}" '$1==a || $1==b {print $3}' | sort -u | wc -l)"
+  if [ "$ids" -lt 2 ]; then
+    echo "!!! $1 and $2 resolved to the same image ID on the node — reload with:" >&2
+    echo "    docker exec ${KIND_CLUSTER}-control-plane crictl rmi $1 $2; $0 images" >&2
+    exit 1
+  fi
 }
 
 cmd_cert_manager() {
