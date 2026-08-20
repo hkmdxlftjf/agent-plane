@@ -1,0 +1,15 @@
+# script-mcp — a general-purpose MCP server: run uploaded scripts (Code
+# Interpreter style) plus a small set of baked-in tools (see tools/). Any
+# language runtime an image ships becomes available to run_script; this build
+# ships python3 and node (the host itself).
+FROM docker.io/library/node:22-alpine
+RUN apk add --no-cache python3
+WORKDIR /app
+COPY server.js ./
+COPY tools/ ./tools/
+COPY vendor/ ./vendor/
+RUN mkdir -p /data/artifacts && chown -R node:node /data
+USER node
+ENV PORT=8080
+EXPOSE 8080
+ENTRYPOINT ["node", "server.js"]
