@@ -112,6 +112,53 @@ func TestMergeWildcardAllow(t *testing.T) {
 	}
 }
 
+// A wildcard allow must be narrowed BY the other side too: unconstrained
+// merged with "only b" is "only b", not "everything".
+func TestMergeWildcardAllowIsNarrowedByExplicitList(t *testing.T) {
+	eff := MergePolicies([]Policy{
+		policyNamed("a", PolicySpec{Models: &AccessRule{Allow: []string{"*"}}}),
+		policyNamed("b", PolicySpec{Models: &AccessRule{Allow: []string{modelGPT4}}}),
+	}, nil)
+	if !eff.Models.Permits(modelGPT4) {
+		t.Error("gpt-4 is allowed by both sides and must stay permitted")
+	}
+	if eff.Models.Permits(modelClaude) {
+		t.Error("a wildcard allow must not widen an explicit allow list on the other side")
+	}
+}
+
+// Two non-empty allow lists with an empty intersection permit nothing — the
+// merged empty list must NOT fall back to "unconstrained" (which would allow
+// everything, the exact opposite of what either Policy says).
+func TestMergeDisjointAllowListsDenyAll(t *testing.T) {
+	eff := MergePolicies([]Policy{
+		policyNamed("a", PolicySpec{Tools: &AccessRule{Allow: []string{toolRefund}}}),
+		policyNamed("b", PolicySpec{Tools: &AccessRule{Allow: []string{"delete"}}}),
+	}, nil)
+	if eff.Tools.Permits(toolRefund) {
+		t.Error("tool allowed only by policy a must not survive the merge")
+	}
+	if eff.Tools.Permits("delete") {
+		t.Error("tool allowed only by policy b must not survive the merge")
+	}
+	if eff.Tools.Permits("anything-else") {
+		t.Error("disjoint allow lists must collapse to deny-all, not allow-all")
+	}
+}
+
+// The deny-all collapse must be visible as violations so a referencing Agent
+// is Degraded instead of silently running with a meaningless policy.
+func TestMergeDisjointAllowListsReportViolations(t *testing.T) {
+	eff := MergePolicies([]Policy{
+		policyNamed("a", PolicySpec{Tools: &AccessRule{Allow: []string{toolRefund}}}),
+		policyNamed("b", PolicySpec{Tools: &AccessRule{Allow: []string{"delete"}}}),
+	}, nil)
+	v := eff.Violations(AgentReferences{Tools: []string{toolRefund}})
+	if len(v) == 0 {
+		t.Error("a tool denied by the merged policy must be reported as a violation")
+	}
+}
+
 // Deny wins across CRs: one Policy allowing a model cannot rescue it from
 // another Policy's deny.
 func TestMergeDenyBeatsAllowAcrossPolicies(t *testing.T) {

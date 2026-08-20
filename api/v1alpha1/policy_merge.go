@@ -87,7 +87,9 @@ func MergePolicies(policies []Policy, toolPolicies []ToolPolicy) *EffectivePolic
 // mergeAccessRule intersects allow lists and unions deny lists. An empty allow
 // list means "unconstrained", so intersecting with it yields the other side
 // rather than the empty set — otherwise a Policy that only denies would
-// accidentally forbid everything.
+// accidentally forbid everything. Two non-empty allow lists with an empty
+// intersection are the opposite case: nothing is permitted anymore, encoded as
+// a deny-all so an empty Allow cannot read as "unconstrained".
 func mergeAccessRule(into, add *AccessRule) *AccessRule {
 	if add == nil {
 		return into
@@ -99,6 +101,10 @@ func mergeAccessRule(into, add *AccessRule) *AccessRule {
 	out := &AccessRule{
 		Allow: intersectOrKeep(into.Allow, add.Allow),
 		Deny:  union(into.Deny, add.Deny),
+	}
+	if len(into.Allow) > 0 && len(add.Allow) > 0 && len(out.Allow) == 0 {
+		out.Allow = nil
+		out.Deny = union(out.Deny, []string{"*"})
 	}
 	return out
 }
@@ -112,21 +118,34 @@ func intersectOrKeep(a, b []string) []string {
 	case len(b) == 0:
 		return a
 	}
+	// A wildcard on either side does not narrow the other — symmetrically:
+	// "everything" narrowed by "only b" is "only b", and vice versa.
+	if containsWildcard(a) {
+		return b
+	}
+	if containsWildcard(b) {
+		return a
+	}
 	inB := make(map[string]bool, len(b))
 	for _, v := range b {
 		inB[v] = true
 	}
-	// A wildcard on either side does not narrow the other.
-	if inB["*"] {
-		return a
-	}
 	out := make([]string, 0, len(a))
 	for _, v := range a {
-		if v == "*" || inB[v] {
+		if inB[v] {
 			out = append(out, v)
 		}
 	}
 	return out
+}
+
+func containsWildcard(list []string) bool {
+	for _, v := range list {
+		if v == "*" {
+			return true
+		}
+	}
+	return false
 }
 
 func union(a, b []string) []string {
