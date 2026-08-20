@@ -469,18 +469,20 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			r.agentsReferencingIndexed([]string{idxAgentPrompt}, []string{idxClassPrompt}, false)).
 		Watches(&corev1alpha1.Policy{},
 			r.agentsReferencingIndexed([]string{idxAgentPolicies}, []string{idxClassPolicies}, false)).
-		// A Tool reaches an Agent directly or through a ToolSet.
+		// A Tool reaches an Agent directly, through a ToolSet, or as its
+		// class's default tool.
 		Watches(&corev1alpha1.Tool{},
-			r.agentsReferencingIndexed([]string{idxAgentTools}, nil, true)).
+			r.agentsReferencingIndexed([]string{idxAgentTools}, []string{idxClassTools}, true)).
 		Watches(&corev1alpha1.ToolSet{},
 			r.agentsReferencingIndexed([]string{idxAgentToolSets}, nil, false)).
-		// The rest are only ever referenced directly.
+		// The rest are only ever referenced directly, except where a class can
+		// hand them down.
 		Watches(&corev1alpha1.Skill{},
-			r.agentsReferencingIndexed([]string{idxAgentSkills}, nil, false)).
+			r.agentsReferencingIndexed([]string{idxAgentSkills}, []string{idxClassSkills}, false)).
 		Watches(&corev1alpha1.Memory{},
 			r.agentsReferencingIndexed([]string{idxAgentMemories}, nil, false)).
 		Watches(&corev1alpha1.ToolPolicy{},
-			r.agentsReferencingIndexed([]string{idxAgentToolPolicies}, nil, false)).
+			r.agentsReferencingIndexed([]string{idxAgentToolPolicies}, []string{idxClassToolPolicies}, false)).
 		Watches(&corev1alpha1.KnowledgeBase{},
 			r.agentsReferencingIndexed([]string{idxAgentKnowledge}, nil, false)).
 		// Credentials the Agent mounts itself. Until now the Agent controller

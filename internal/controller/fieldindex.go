@@ -50,10 +50,13 @@ const (
 	idxAgentCredentials  = "spec.credentialRefs"
 	idxAgentClass        = "spec.agentClassRef"
 
-	idxClassModel    = "spec.defaultModelRef"
-	idxClassWorkflow = "spec.defaultWorkflowRef"
-	idxClassPrompt   = "spec.defaultPromptRef"
-	idxClassPolicies = "spec.defaultPolicyRefs"
+	idxClassModel        = "spec.defaultModelRef"
+	idxClassWorkflow     = "spec.defaultWorkflowRef"
+	idxClassPrompt       = "spec.defaultPromptRef"
+	idxClassPolicies     = "spec.defaultPolicyRefs"
+	idxClassTools        = "spec.defaultToolRefs"
+	idxClassSkills       = "spec.defaultSkillRefs"
+	idxClassToolPolicies = "spec.defaultToolPolicyRefs"
 
 	idxToolSetTools     = "spec.toolRefs"
 	idxToolMCPServer    = "spec.mcpServerRef"
@@ -174,6 +177,15 @@ func indexSpecs() []indexSpec {
 		}},
 		{&corev1alpha1.AgentClass{}, idxClassPolicies, func(o client.Object) []string {
 			return refNamesOf(o.(*corev1alpha1.AgentClass).Spec.DefaultPolicyRefs)
+		}},
+		{&corev1alpha1.AgentClass{}, idxClassTools, func(o client.Object) []string {
+			return refNamesOf(o.(*corev1alpha1.AgentClass).Spec.DefaultToolRefs)
+		}},
+		{&corev1alpha1.AgentClass{}, idxClassSkills, func(o client.Object) []string {
+			return refNamesOf(o.(*corev1alpha1.AgentClass).Spec.DefaultSkillRefs)
+		}},
+		{&corev1alpha1.AgentClass{}, idxClassToolPolicies, func(o client.Object) []string {
+			return refNamesOf(o.(*corev1alpha1.AgentClass).Spec.DefaultToolPolicyRefs)
 		}},
 
 		// --- the remaining reference-resolving kinds ---
