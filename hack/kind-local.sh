@@ -81,13 +81,18 @@ cmd_apply() {
   local mgr="config/manager/kustomization.yaml" backup
   backup="$(mktemp)"
   cp "$mgr" "$backup"
-  trap 'mv "$backup" "$mgr"' EXIT
+  trap 'mv "$backup" "$mgr"; mv "$backup2" "$reg"' EXIT
+  local reg="config/registry/kustomization.yaml" backup2
+  backup2="$(mktemp)"
+  cp "$reg" "$backup2"
   (cd config/manager && "$KUSTOMIZE_BIN" edit set image controller="$IMG")
   "$KUSTOMIZE_BIN" build config/default | kubectl apply -f -
   mv "$backup" "$mgr"
+  echo ">>> applying config/registry with image $REGISTRY_IMG"
+  (cd config/registry && "$KUSTOMIZE_BIN" edit set image agent-plane-registry="$REGISTRY_IMG")
+  "$KUSTOMIZE_BIN" build config/registry | kubectl apply -f -
+  mv "$backup2" "$reg"
   trap - EXIT
-  echo ">>> applying config/registry"
-  kubectl apply -f config/registry/registry.yaml
 }
 
 cmd_verify() {

@@ -62,12 +62,29 @@ spec:
       labels: {app.kubernetes.io/name: agent-plane-registry}
     spec:
       serviceAccountName: agent-plane-registry
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: registry
         image: agent-plane-registry:dev
         args: ["--addr", ":9090"]
         ports:
         - {name: http, containerPort: 9090}
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        livenessProbe:
+          httpGet: {path: /healthz, port: http}
+          initialDelaySeconds: 5
+          periodSeconds: 20
+        readinessProbe:
+          httpGet: {path: /healthz, port: http}
+          initialDelaySeconds: 3
+          periodSeconds: 10
         resources:
           requests: {cpu: 10m, memory: 64Mi}
           limits: {cpu: 200m, memory: 128Mi}
