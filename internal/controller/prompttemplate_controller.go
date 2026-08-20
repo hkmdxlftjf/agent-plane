@@ -36,9 +36,8 @@ type PromptTemplateReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=prompttemplates,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=prompttemplates,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=prompttemplates/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=prompttemplates/finalizers,verbs=update
 
 // Reconcile publishes readiness for the PromptTemplate.
 func (r *PromptTemplateReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

@@ -192,7 +192,8 @@ func TestIndexedWatchFollowsAgentClassInheritanceForLists(t *testing.T) {
 }
 
 // A Tool reaches an Agent directly or through a ToolSet. Both routes must fire.
-func TestIndexedWatchFollowsToolSetExpansion(t *testing.T) {	c := indexedClient(t,
+func TestIndexedWatchFollowsToolSetExpansion(t *testing.T) {
+	c := indexedClient(t,
 		&corev1alpha1.ToolSet{
 			ObjectMeta: metav1.ObjectMeta{Name: testToolSetName, Namespace: nsDefault},
 			Spec:       corev1alpha1.ToolSetSpec{ToolRefs: refs("shared-tool")},

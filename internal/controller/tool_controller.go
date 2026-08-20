@@ -35,9 +35,8 @@ type ToolReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=tools,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=tools,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=tools/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=tools/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=mcpservers;agents,verbs=get;list;watch
 
 // Reconcile validates the Tool and publishes readiness.

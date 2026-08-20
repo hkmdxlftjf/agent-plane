@@ -9,6 +9,7 @@ rules:
   resources:
   - configmaps
   - secrets
+  - services
   verbs:
   - get
   - list
@@ -23,28 +24,12 @@ rules:
   - list
   - watch
 - apiGroups:
-  - ""
-  resources:
-  - services
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
   - apps
   resources:
   - deployments
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - core.hkmdxlftjf.io
@@ -65,33 +50,9 @@ rules:
   - triggers
   - workflows
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
-- apiGroups:
-  - core.hkmdxlftjf.io
-  resources:
-  - agentclasses/finalizers
-  - agents/finalizers
-  - credentials/finalizers
-  - knowledgebases/finalizers
-  - mcpservers/finalizers
-  - memories/finalizers
-  - models/finalizers
-  - policies/finalizers
-  - prompttemplates/finalizers
-  - skills/finalizers
-  - toolpolicies/finalizers
-  - tools/finalizers
-  - toolsets/finalizers
-  - triggers/finalizers
-  - workflows/finalizers
-  verbs:
-  - update
 - apiGroups:
   - core.hkmdxlftjf.io
   resources:

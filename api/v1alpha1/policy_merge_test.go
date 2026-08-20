@@ -40,6 +40,7 @@ const (
 	modelGPT4   = "gpt-4"
 	toolRefund  = "refund"
 	toolLookup  = "lookup"
+	toolDelete  = "delete"
 
 	// Expected fragments of violation messages, shared by the policy and skill
 	// scope tests.
@@ -133,7 +134,7 @@ func TestMergeWildcardAllowIsNarrowedByExplicitList(t *testing.T) {
 func TestMergeDisjointAllowListsDenyAll(t *testing.T) {
 	eff := MergePolicies([]Policy{
 		policyNamed("a", PolicySpec{Tools: &AccessRule{Allow: []string{toolRefund}}}),
-		policyNamed("b", PolicySpec{Tools: &AccessRule{Allow: []string{"delete"}}}),
+		policyNamed("b", PolicySpec{Tools: &AccessRule{Allow: []string{toolDelete}}}),
 	}, nil)
 	if eff.Tools.Permits(toolRefund) {
 		t.Error("tool allowed only by policy a must not survive the merge")
@@ -151,7 +152,7 @@ func TestMergeDisjointAllowListsDenyAll(t *testing.T) {
 func TestMergeDisjointAllowListsReportViolations(t *testing.T) {
 	eff := MergePolicies([]Policy{
 		policyNamed("a", PolicySpec{Tools: &AccessRule{Allow: []string{toolRefund}}}),
-		policyNamed("b", PolicySpec{Tools: &AccessRule{Allow: []string{"delete"}}}),
+		policyNamed("b", PolicySpec{Tools: &AccessRule{Allow: []string{toolDelete}}}),
 	}, nil)
 	v := eff.Violations(AgentReferences{Tools: []string{toolRefund}})
 	if len(v) == 0 {

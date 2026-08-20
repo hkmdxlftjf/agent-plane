@@ -34,9 +34,8 @@ type MemoryReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=memories,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=memories,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=memories/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=memories/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=credentials,verbs=get;list;watch
 
 // Reconcile validates the Memory's references and publishes readiness.

@@ -49,11 +49,10 @@ type TriggerReconciler struct {
 // value out of `kubectl describe pod` and the process environment.
 const credentialMountPath = "/var/run/agentplane/credential"
 
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=triggers,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=triggers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=triggers/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=triggers/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agents;credentials,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
 
 // Reconcile resolves the Trigger's Agent, materializes the adapter Deployment,
 // and publishes readiness.
