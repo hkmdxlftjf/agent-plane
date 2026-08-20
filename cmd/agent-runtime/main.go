@@ -139,6 +139,11 @@ func main() {
 		Endpoint: endpoint, APIKey: apiKey, Model: cfg.Model.ModelName,
 		System: system, Tools: cfg.Tools, MaxSteps: maxSteps,
 		Logf: func(f string, a ...any) { fmt.Printf("  "+f+"\n", a...) },
+		// A reasoning-mode model (e.g. Qwen3 via vLLM) can put its whole
+		// response in a "reasoning" field the SDK doesn't read, leaving
+		// content/tool_calls empty until — or if — it finishes "thinking";
+		// see thinking.go. AGENTPLANE_DISABLE_THINKING=false opts out.
+		HTTPClient: wrapHTTPClientForThinkingModels(nil, os.Getenv("AGENTPLANE_DISABLE_THINKING") == "false"),
 	}
 
 	// Build the policy enforcer from the Registry-served view. The Operator has
