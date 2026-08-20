@@ -9,7 +9,6 @@ rules:
   resources:
   - configmaps
   - secrets
-  - services
   verbs:
   - get
   - list
@@ -24,12 +23,28 @@ rules:
   - list
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - apps
   resources:
   - deployments
   verbs:
+  - create
+  - delete
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - core.hkmdxlftjf.io

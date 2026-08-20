@@ -135,8 +135,8 @@ type peerRef struct {
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agents,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agents/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=models;workflows;prompttemplates;tools;toolsets;skills;memories;policies;toolpolicies;agentclasses,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=credentials,verbs=get;list;watch
 
@@ -371,9 +371,15 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 				ResourceVersion: t.obj.GetResourceVersion(),
 			})
 			if t.git {
+				// Only record the Secret name. The git credential mounts at the
+				// clone path, not the generic credentials path, so collecting
+				// it here would (a) mount the Secret a second time and (b)
+				// emit a duplicate volume when the same Credential is also
+				// listed in spec.credentialRefs.
 				res.gitSecret = t.obj.(*corev1alpha1.Credential).Spec.SecretRef.Name
+			} else {
+				res.collect(t.obj)
 			}
-			res.collect(t.obj)
 		case apierrors.IsNotFound(getErr):
 			res.missing = append(res.missing, fmt.Sprintf("%s/%s", t.kind, t.name))
 		default:

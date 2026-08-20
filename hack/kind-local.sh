@@ -76,25 +76,31 @@ cmd_cert_manager() {
   kubectl wait --for=condition=Available deployment --all -n cert-manager --timeout="$WAIT_TIMEOUT"
 }
 
+# Backups for cmd_apply. Deliberately global: an EXIT trap cannot see a
+# function's locals (they are gone by the time the trap runs), so a local-based
+# restore silently failed and left the kustomization edits behind on error.
+APPLY_BACKUPS=()
+
 cmd_apply() {
   echo ">>> applying config/default with image $IMG"
-  local mgr="config/manager/kustomization.yaml" backup
-  backup="$(mktemp)"
-  cp "$mgr" "$backup"
-  trap 'mv "$backup" "$mgr"; mv "$backup2" "$reg"' EXIT
-  local reg="config/registry/kustomization.yaml" backup2
-  backup2="$(mktemp)"
-  cp "$reg" "$backup2"
+  local mgr="config/manager/kustomization.yaml" reg="config/registry/kustomization.yaml"
+  local mgr_backup reg_backup
+  mgr_backup="$(mktemp)"
+  reg_backup="$(mktemp)"
+  cp "$mgr" "$mgr_backup"
+  cp "$reg" "$reg_backup"
+  APPLY_BACKUPS=("$mgr_backup:$mgr" "$reg_backup:$reg")
+  trap 'for pair in "${APPLY_BACKUPS[@]}"; do mv -f "${pair%%:*}" "${pair#*:}"; done' EXIT
   (cd config/manager && "$KUSTOMIZE_BIN" edit set image controller="$IMG")
   "$KUSTOMIZE_BIN" build config/default | kubectl apply -f -
-  mv "$backup" "$mgr"
   echo ">>> applying config/registry with image $REGISTRY_IMG"
   (cd config/registry && "$KUSTOMIZE_BIN" edit set image agent-plane-registry="$REGISTRY_IMG")
   "$KUSTOMIZE_BIN" build config/registry | kubectl apply -f -
   # Same dev tag on every build: apply alone sees no template diff and keeps
   # the old pods. Restart to pick up the freshly loaded image.
   kubectl rollout restart deployment/agent-plane-controller-manager deployment/agent-plane-registry -n "$NAMESPACE"
-  mv "$backup2" "$reg"
+  for pair in "${APPLY_BACKUPS[@]}"; do mv -f "${pair%%:*}" "${pair#*:}"; done
+  APPLY_BACKUPS=()
   trap - EXIT
 }
 

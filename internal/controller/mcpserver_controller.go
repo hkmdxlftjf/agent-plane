@@ -44,8 +44,8 @@ type MCPServerReconciler struct {
 
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=mcpservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=mcpservers/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile ensures a Deployment and Service exist for the MCPServer and
 // reflects the Deployment's availability into status.
