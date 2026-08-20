@@ -1,0 +1,144 @@
+# 可运行的旅行 demo：旅行规划助手（聊天 UI + 高德真实数据 + travel-plan-viz skill）
+#
+# 这是 travel 样例的"全接线"版本：Agent 带 spec.runtime（agent-runtime 镜像的
+# serve 模式，提供现代聊天 UI 与 /api/chat）、三个高德 MCP 工具（externalEndpoint
+# 模式，无集群内 workload）、以及把 github.com/zexuanw958-svg/travel-plan-viz
+# 适配成 Skill CR 的两个对象（路由 + 引擎；引擎正文内联了上游的 map.js/reminders.js
+# 源码，见 travel-plan-viz-engine.md）。聊天里说"帮我做北京 4 天 3 晚计划"，
+# Agent 会调高德工具取真实 POI/天气，产出单文件 HTML 行程页——UI 会把回复中的
+# html 围栏渲染成可预览/可下载的卡片。
+#
+# 前置：operator + registry 已部署（make deploy-kind），agent-runtime 镜像已
+# 构建并加载（docker build -f Dockerfile.agent-runtime -t agent-plane-runtime:dev .
+# && kind load docker-image agent-plane-runtime:dev --name agent-plane）。
+#
+# 使用：
+#   kubectl create ns travel-demo
+#   kubectl apply -f . -n travel-demo          # Workflow/PromptTemplate 在 ../travel-agent.yaml
+#   kubectl apply -f ../travel-agent.yaml -n travel-demo   # 只取其中的 Workflow + PromptTemplate
+#
+#   # 填两个 key（LLM + 高德）：
+#   kubectl -n travel-demo create secret generic llm-secret --dry-run=client -o yaml \
+#     --from-literal=api-key=sk-xxx | kubectl apply -f -
+#   kubectl -n travel-demo patch mcpserver amap-maps --type merge \
+#     -p '{"spec":{"externalEndpoint":"https://mcp.amap.com/mcp?key=你的高德KEY"}}'
+#   kubectl -n travel-demo rollout restart deploy travel-agent-runtime
+#
+#   kubectl -n travel-demo port-forward svc/travel-agent-runtime 8080:8080
+#   # 打开 http://localhost:8080
+#
+# Model 默认指向 OpenAI；换别家改 Model CR 的 provider/modelName/endpoint 即可
+#（openai 兼容端点都行，如 deepseek/zhipu 的 openai 兼容层）。
+apiVersion: v1
+kind: Secret
+metadata: {name: llm-secret, namespace: travel-demo}
+type: Opaque
+stringData: {api-key: "PLACEHOLDER_FILL_ME"}
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Credential
+metadata: {name: llm-key, namespace: travel-demo}
+spec:
+  secretRef: {name: llm-secret, key: api-key}
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Model
+metadata: {name: llm-model, namespace: travel-demo}
+spec:
+  provider: openai
+  modelName: gpt-4o-mini
+  endpoint: https://api.openai.com/v1
+  credentialRef: {name: llm-key}
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: MCPServer
+metadata: {name: amap-maps, namespace: travel-demo}
+spec:
+  transport: http
+  externalEndpoint: "https://mcp.amap.com/mcp?key=YOUR_AMAP_KEY"
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Tool
+metadata: {name: amap-poi-search, namespace: travel-demo}
+spec:
+  type: mcp
+  description: Search real points of interest (attractions, hotels, restaurants) in a Chinese city by keyword. Returns names, addresses and coordinates from Amap.
+  mcpServerRef: {name: amap-maps}
+  mcpToolName: maps_text_search
+  inputSchema:
+    type: object
+    properties:
+      keywords: {type: string, description: "search keywords, in Chinese, e.g. 故宫, 舒适型酒店"}
+      city: {type: string, description: "city name, in Chinese, e.g. 北京"}
+    required: ["keywords"]
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Tool
+metadata: {name: amap-around-search, namespace: travel-demo}
+spec:
+  type: mcp
+  description: Search points of interest around a coordinate, useful for hotels or restaurants near an attraction.
+  mcpServerRef: {name: amap-maps}
+  mcpToolName: maps_around_search
+  inputSchema:
+    type: object
+    properties:
+      keywords: {type: string}
+      location: {type: string, description: "lon,lat from a previous POI result"}
+      radius: {type: string}
+    required: ["keywords", "location"]
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Tool
+metadata: {name: amap-weather, namespace: travel-demo}
+spec:
+  type: mcp
+  description: Real weather forecast for a Chinese city, from Amap.
+  mcpServerRef: {name: amap-maps}
+  mcpToolName: maps_weather
+  inputSchema:
+    type: object
+    properties:
+      city: {type: string, description: "city name in Chinese, e.g. 北京"}
+    required: ["city"]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: travel-agent, namespace: travel-demo}
+---
+# get only, no list/watch: the runtime resolves the Secrets its own Model names.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: travel-agent, namespace: travel-demo}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: travel-agent, namespace: travel-demo}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: travel-agent}
+subjects: [{kind: ServiceAccount, name: travel-agent}]
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Agent
+metadata: {name: travel-agent, namespace: travel-demo}
+spec:
+  description: 旅行规划助手 — 高德真实数据 + 行程可视化 skill，产出单文件 HTML 行程页。
+  modelRef: {name: llm-model}
+  workflowRef: {name: travel-planning}
+  promptRef: {name: travel-planner-prompt}
+  toolRefs:
+    - {name: amap-poi-search}
+    - {name: amap-around-search}
+    - {name: amap-weather}
+  skillRefs:
+    - {name: travel-plan-viz}
+    - {name: travel-plan-viz-engine}
+  runtime:
+    image: docker.io/library/agent-plane-runtime:dev
+    serviceAccountName: travel-agent
+    port: 8080
+    env:
+      - {name: AGENTPLANE_SERVE, value: "1"}
