@@ -1,8 +1,8 @@
 # 可运行的旅行 demo：旅行规划助手（聊天 UI + 高德真实数据 + Skill/MCP 双引擎）
 #
-# 这是 travel 样例的"全接线"版本：Agent 带 spec.runtime（agent-runtime 镜像的
-# serve 模式，提供现代聊天 UI、/api/chat、/api/artifact 代理）、三个高德 MCP 工具
-# （externalEndpoint 模式，无集群内 workload）、以及一个通用脚本执行 MCP
+# 这是 travel 样例的"全接线"版本：Agent 带 spec.runtime（node-agent-runtime 镜像
+# 的 serve 模式，提供现代聊天 UI、/api/chat、/api/artifact 代理）、三个高德 MCP
+# 工具（externalEndpoint 模式，无集群内 workload）、以及一个通用脚本执行 MCP
 # server（script-tools，image 模式，见 ../../../cmd/script-mcp）——它把
 # github.com/zexuanw958-svg/travel-plan-viz 的机械部分（校验、渲染、坐标纠偏）
 # 做成 render_trip 工具，另外还带 run_script（Code Interpreter：模型可执行任意
@@ -11,14 +11,23 @@
 # [artifact:id] → UI 通过 runtime 代理拉取，渲染成可预览/下载的行程页卡片
 # （HTML 全程不进模型上下文）。
 #
+# Runtime 用 cmd/node-agent-runtime（Vercel AI SDK）而非 cmd/agent-runtime（Go
+# 参考实现）：真实验证过程中，几个 reasoning 模型（Qwen3/vLLM、GLM-5.3）会把
+# 回复整段塞进非标准的 reasoning/reasoning_content 字段、content 留空——Go SDK
+# 的消息类型只读 content/tool_calls，把这种响应误判成"完成，答案是空字符串"。
+# AI SDK 把 reasoning 当一等公民的独立字段处理，不会误判；步数耗尽仍无答案时会
+# 抛出明确错误（含 finishReason 和步数）而不是静默吐空。cmd/agent-runtime 仍是
+# 仓库默认参考实现，两个 runtime 都遵守同一份 docs/runtime-protocol.md 协议，
+# 换回去只需要改 spec.runtime.image。
+#
 # 前置：operator + registry 已部署（make deploy-kind），两个镜像已构建并加载：
-#   docker build -f Dockerfile.agent-runtime -t agent-plane-runtime:dev .
+#   docker build -f Dockerfile.node-agent-runtime -t node-agent-runtime:dev cmd/node-agent-runtime
 #   docker build -f Dockerfile.script-mcp -t script-mcp:dev cmd/script-mcp
-#   kind load docker-image agent-plane-runtime:dev script-mcp:dev --name agent-plane
+#   kind load docker-image node-agent-runtime:dev script-mcp:dev --name agent-plane
 #
 # 注意（kind+podman 已知坑）：两个镜像若共享 base layer，kind load 偶发把新镜像
 # 的 tag 错点到旧 image ID 上（server 起来是另一个二进制）。校验：
-#   docker exec agent-plane-control-plane crictl images | grep -E "script-mcp|agent-plane-runtime"
+#   docker exec agent-plane-control-plane crictl images | grep -E "script-mcp|node-agent-runtime"
 # 两行的 IMAGE ID 必须不同；相同就 `crictl rmi <重名的 tag>` 后重新 kind load。
 #
 # 使用：
@@ -37,7 +46,8 @@
 #   # 打开 http://localhost:8080
 #
 # Model 默认指向 OpenAI；换别家改 Model CR 的 provider/modelName/endpoint 即可
-#（openai 兼容端点都行，如 deepseek/zhipu 的 openai 兼容层）。
+#（openai 兼容端点都行，如 deepseek/zhipu/智谱 GLM 的 openai 兼容层——实测跑通过
+# GLM-5.3，一次 7 天行程规划约需 30 步、几分钟，见下面 AGENTPLANE_MAX_STEPS）。
 apiVersion: v1
 kind: Secret
 metadata: {name: llm-secret, namespace: travel-demo}
@@ -209,8 +219,12 @@ spec:
     - {name: travel-plan-viz}
     - {name: travel-plan-viz-engine}
   runtime:
-    image: docker.io/library/agent-plane-runtime:dev
+    image: docker.io/library/node-agent-runtime:dev
     serviceAccountName: travel-agent
     port: 8080
     env:
       - {name: AGENTPLANE_SERVE, value: "1"}
+      # A 7-day itinerary (research + POI/weather lookups + render_trip) took
+      # ~30 tool-calling steps against GLM-5.3 in testing; the SDK default
+      # (12) cut it off mid-research with a "no final answer" error.
+      - {name: AGENTPLANE_MAX_STEPS, value: "30"}
