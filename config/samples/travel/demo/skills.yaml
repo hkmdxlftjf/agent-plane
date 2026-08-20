@@ -1,266 +1,59 @@
 apiVersion: v1
 data:
   skill.md: |
-    # travel-plan-viz 引擎：生成单文件行程页
+    # 旅行计划可视化
 
-    加载本 skill 后，你的任务是把用户的旅行需求变成**一个美观、离线可读、手机优先的单文件 HTML 行程页**。美学自行发挥（配色每趟行程不同、卡片圆角、留白），但数据结构与区块契约必须严格遵守。
+    用户想要旅行计划、行程页、攻略网页时加载本 skill。产出方式已从"自己写 HTML"改为
+    "调用 render_trip 工具"——数据校验与页面渲染由工具机械完成，你只负责研究与组织
+    trip 数据。
 
-    ## 数据来源（按优先级）
+    ## 数据来源
 
-    1. **高德 MCP 工具（真实数据）**：amap-poi-search（按关键词+城市查 POI，返回名称/地址/坐标）、amap-around-search（按坐标查周边，用于"景点附近找酒店/餐厅"）、amap-weather（城市天气预报）。排行程前先逐城调用，把返回的真实名称与坐标写进 trip。
-    2. 工具给不了的（营业时间/门票参考价/评分/图片 URL/航班候选/酒店价位），用你的知识填写，保持参考价口径（写"约 ¥xx"），页面保留免责声明。
-    3. 天气应对直接用 amap-weather 的返回写 preTrip.weather。
+    1. **高德 MCP 工具（真实数据）**：amap-poi-search（按关键词+城市查 POI，得名称/地址/坐标）、
+       amap-around-search（按坐标查周边）、amap-weather（城市天气预报）。排行程前逐城调用，
+       把真实名称/坐标写进 trip。
+    2. 工具给不了的（营业时间/门票参考价/评分/一句话点评/航班候选/酒店价位），用你的知识填，
+       保持参考价口径（"约 ¥xx"）。
+    3. 若给图片 URL，先用 check-urls 批量验证，换掉死链或干脆省略 photo 字段（可选字段，渲染
+       器会优雅降级，不会露破图）。
 
-    **高德返回的是 GCJ-02 坐标**。你无法在聊天外执行代码，所以：坐标**原样**写入 trip 并设 `coordinateSystem: "GCJ-02"`，由页面脚本在初始化地图前统一转换为 WGS-84（必含片段见下）。不要自己心算纠偏。
-
-    ## 交付格式（重要）
-
-    最终回复 = 简短总结（2–3 句话：行程骨架 + 亮点 + 出发前最要紧的一件订票事项）+ **一个完整的 html 围栏**（整页单文件，从 <!doctype html> 到 </html>，一次性给全）。聊天界面会把该围栏渲染成可预览、可下载的行程页卡片。**不要拆成多个围栏，不要省略内容说"其余同上"**。
-
-    ## 页面必含区块（顺序可调，内容不可缺）
-
-    1. 行程标题 + 页顶待办清单：`computeReminders(trip.startDate, trip.reminders)` 的结果经 `renderChecklistHTML(...)` 渲染
-    2. 行前须知（preTrip）：天气/台风、穿搭、支付、必备 App、购票时机
-    3. 航班区：已订班次高亮；未订给 3–5 个待选班次（label/code/time/note）
-    4. 酒店区：按片区推荐，每片区经济/中档/高端三档（area/reason/options）
-    5. 全程贴士（tips）
-    6. 每日时间轴：早/中/晚分段卡片——photo、rating、review、openingHours、closedDays（如有）、ticketPrice、transport（方式/票价/耗时）、seasonal（如有）；`needsBooking` 为 true 的卡片插入 `reminderBadgeHTML(leadDays)`；当日 tips 与 alternatives（二选一）如有则展示；当日餐饮 dining（必点菜+参考价）
-    7. 交互地图：`<div id="map">`，Leaflet CDN 引入，`initTravelMap('map', points)`，points 为全部 slot 按序汇总的 {lat,lng,name,time}（**转换后**的坐标）
-    8. 免责声明（disclaimer 原文，显著位置）
+    **坐标系**：高德返回 GCJ-02。把坐标原样写入 trip 并设 `coordinateSystem: "GCJ-02"`——
+    render-trip 会自动纠偏为 WGS-84，你不需要也不能自己转换。
 
     ## trip 数据结构
 
-    完整 trip JSON 以 `<script id="trip-data" type="application/json">` 内嵌页面（后续迭代的唯一数据源）。字段：
-
     ```
     trip = {
-      title, startDate("YYYY-MM-DD"), colorScheme, coordinateSystem: "GCJ-84"|"WGS-84",
+      title, startDate("YYYY-MM-DD"), coordinateSystem: "GCJ-02"|"WGS-84",
       preTrip: { weather:{summary,typhoon}, packing, payment, apps[], ticketTip },
       flights: { booked:[{label,code,time}], candidates:[{label,code,time,note}] },
       hotelAreas: [ { area, reason, options:[{tier,name,priceRange,note}] } ],
-      disclaimer, tips[],
-      reminders: [ {item, leadDays} ],
+      disclaimer,  // 必填，>=20 字，全覆盖免责声明
+      tips: [],
+      reminders: [ {item, leadDays} ],  // 喂给页顶待办清单
       days: [ { date, weekday, theme?, tips?[], alternatives?[{label,summary}],
-        slots: [ { period:"morning"|"noon"|"evening", name, time, lat, lng, photo,
-          rating, review, openingHours?, closedDays?, ticketPrice?,
+        slots: [ { period:"morning"|"noon"|"evening", name, time, lat, lng,
+          photo?, rating?, review?, openingHours?, closedDays?, ticketPrice?,
           transport?{mode,fare,duration}, seasonal?, needsBooking, leadDays } ],
         dining: [ {meal, place, hours, dishes:[{name,price}]} ] } ]
     }
     ```
 
-    ## 坐标转换片段（必须，放在引擎之后、initTravelMap 之前）
+    ## 交付流程
 
-    ```
-    (function(){
-      var trip = JSON.parse(document.getElementById('trip-data').textContent);
-      if (trip.coordinateSystem === 'GCJ-02') {
-        trip.days.forEach(function(d){ (d.slots||[]).forEach(function(s){
-          var w = gcj02ToWgs84(s.lat, s.lng); s.lat = w.lat; s.lng = w.lng; }); });
-      }
-      window.__trip = trip;
-    })();
-    ```
+    1. 组好 trip JSON。
+    2. 调用 **render-trip**（`trip`，可选 `design: {colorScheme, accentColor, fontFamily, customCSS}`
+       让每趟配色不同）。
+    3. 如果返回校验失败（`isError`，errors 列表），按报错修 trip 重新调用——**不要**自己拼 HTML
+       兜底，工具的校验就是为了不让不完整数据流出去。
+    4. 成功后拿到 `{artifactId, summary, warnings}`。回复给用户：2–3 句总结 + 亮点，**最后一行
+       写 `[artifact:<artifactId>]`**（聊天界面据此渲染可预览/下载的行程页卡片）。不要在回复里
+       粘贴任何 HTML。
+    5. warnings 非空时口头提一句（如"缺酒店信息，已用通用建议占位"），不阻塞交付。
 
-    地图与清单渲染统一从 `window.__trip` 取数。
+    ## 边界
 
-    ## 必内联引擎（原样复制进 <script>，不得改写函数名与行为）
-
-    ### map.js
-
-    // Leaflet 地图引擎。纯函数（buildNavLink/buildMapAppLinks/routeCoordinates/gcj02ToWgs84）可单元测试；
-    // initTravelMap 需浏览器 + Leaflet (L)。浏览器与 Node 双用。
-
-    // HTML 转义，防止 XSS
-    function escapeHTML(s) {
-      return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
-
-    // 生成跳转手机地图导航的链接。
-    // iOS 不识别 geo: scheme，用 Apple Maps 的 https 通用链接；其余平台用 geo:。
-    // ua 可选（浏览器里传 navigator.userAgent），不传则回退 geo:。
-    function buildNavLink(lat, lng, label, ua) {
-      if (ua && /iPhone|iPad|iPod/.test(ua)) {
-        return 'https://maps.apple.com/?ll=' + lat + ',' + lng + '&q=' + encodeURIComponent(label);
-      }
-      return 'geo:' + lat + ',' + lng + '?q=' + lat + ',' + lng + '(' + encodeURIComponent(label) + ')';
-    }
-
-    // 常用地图 App 的点位链接（免 key 的官方 URI 规范：高德 URI API、Google Maps URLs）。
-    // 这不是 page-contract 的 actionLink——不承载实时数据主张，只是"打开地图看这个点"。
-    // 境内点只给高德（Google 地图境内不可用、底图坐标系还会偏移）；境外点给 Google + 高德。
-    // 输入坐标一律 WGS-84：高德 URI 用 coordinate=wgs84 声明由其换算，Google 本身即 WGS-84。
-    // isInChinaBBox 声明在下方 GCJ 区块（函数声明有提升，此处可用）。
-    function buildMapAppLinks(lat, lng, label) {
-      var amap = {
-        label: '高德地图',
-        url: 'https://uri.amap.com/marker?position=' + lng + ',' + lat
-          + '&name=' + encodeURIComponent(label)
-          + '&coordinate=wgs84&callnative=1&src=travel-plan-viz',
-      };
-      var google = {
-        label: 'Google 地图',
-        url: 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(lat + ',' + lng),
-      };
-      return isInChinaBBox(lat, lng) ? [amap] : [google, amap];
-    }
-
-    // —— GCJ-02 → WGS-84 坐标转换 ——
-    // 高德/腾讯地图返回的坐标是 GCJ-02（国测局加密），直接画在 OSM（WGS-84）瓦片上
-    // 会偏移一百到几百米。凡坐标来自高德/腾讯类 skill，必须先经此函数转换。
-    // 中国境外坐标原样返回（GCJ-02 仅在境内加偏）。
-    var GCJ_A = 6378245.0;
-    var GCJ_EE = 0.00669342162296594323;
-
-    function isInChinaBBox(lat, lng) {
-      return lng >= 72.004 && lng <= 137.8347 && lat >= 0.8293 && lat <= 55.8271;
-    }
-
-    function gcjTransformLat(x, y) {
-      var ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
-      ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
-      ret += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
-      ret += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320.0 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0;
-      return ret;
-    }
-
-    function gcjTransformLng(x, y) {
-      var ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
-      ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
-      ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
-      ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
-      return ret;
-    }
-
-    function gcj02ToWgs84(lat, lng) {
-      if (!isInChinaBBox(lat, lng)) return { lat: lat, lng: lng };
-      var dLat = gcjTransformLat(lng - 105.0, lat - 35.0);
-      var dLng = gcjTransformLng(lng - 105.0, lat - 35.0);
-      var radLat = lat / 180.0 * Math.PI;
-      var magic = Math.sin(radLat);
-      magic = 1 - GCJ_EE * magic * magic;
-      var sqrtMagic = Math.sqrt(magic);
-      dLat = (dLat * 180.0) / ((GCJ_A * (1 - GCJ_EE)) / (magic * sqrtMagic) * Math.PI);
-      dLng = (dLng * 180.0) / (GCJ_A / sqrtMagic * Math.cos(radLat) * Math.PI);
-      return { lat: lat - dLat, lng: lng - dLng };
-    }
-
-    // 从有序点位提取 [lat,lng] 数组，用于连线
-    function routeCoordinates(points) {
-      return points.map(function (p) { return [p.lat, p.lng]; });
-    }
-
-    // 初始化地图：编号 divIcon 标记、按序虚线路线、点击弹出 名称+时间+导航链接。
-    // elementId: 容器 id；points: [{lat, lng, name, time}]（按行程顺序，坐标须为 WGS-84）
-    // opts 可选：{ tileUrl, attribution } 替换默认 OSM 瓦片源（如 OSM 访问不稳时换镜像）。
-    function initTravelMap(elementId, points, opts) {
-      opts = opts || {};
-      var map = L.map(elementId);
-      L.tileLayer(opts.tileUrl || 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: opts.attribution || '© OpenStreetMap contributors',
-        maxZoom: 19,
-      }).addTo(map);
-
-      var ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
-      points.forEach(function (p, i) {
-        var icon = L.divIcon({
-          className: 'route-pin',
-          html: '<span class="route-pin__num">' + (i + 1) + '</span>',
-          iconSize: [28, 28],
-          iconAnchor: [14, 14],
-        });
-        var navLinks = [{ label: '导航', url: buildNavLink(p.lat, p.lng, p.name, ua) }]
-          .concat(buildMapAppLinks(p.lat, p.lng, p.name));
-        L.marker([p.lat, p.lng], { icon: icon }).addTo(map).bindPopup(
-          '<b>' + (i + 1) + '. ' + escapeHTML(p.name) + '</b><br>'
-          + (p.time ? escapeHTML(p.time) + '<br>' : '')
-          + navLinks.map(function (l) {
-              return '<a href="' + l.url + '">' + escapeHTML(l.label) + '</a>';
-            }).join(' · ')
-        );
-      });
-
-      var coords = routeCoordinates(points);
-      if (coords.length > 1) {
-        L.polyline(coords, { dashArray: '6 8', weight: 2 }).addTo(map);
-      }
-      map.fitBounds(coords.length ? coords : [[0, 0]], { padding: [30, 30] });
-      return map;
-    }
-
-    if (typeof module !== 'undefined' && module.exports) {
-      module.exports = {
-        buildNavLink: buildNavLink,
-        buildMapAppLinks: buildMapAppLinks,
-        routeCoordinates: routeCoordinates,
-        gcj02ToWgs84: gcj02ToWgs84,
-        initTravelMap: initTravelMap,
-      };
-    }
-
-    ### reminders.js
-
-    // 出发前提醒：截止日期计算 + 渲染。浏览器与 Node 双用。
-
-    // startDateISO: 'YYYY-MM-DD'；items: [{item, leadDays}]
-    // 返回按 deadline 升序的 [{item, leadDays, deadline}]，deadline 为 'YYYY-MM-DD'
-    // 用 UTC 做日期运算，避免本地时区导致的偏移。
-    function computeReminders(startDateISO, items) {
-      return items
-        .map(function (it) {
-          var d = new Date(startDateISO + 'T00:00:00Z');
-          d.setUTCDate(d.getUTCDate() - it.leadDays);
-          return { item: it.item, leadDays: it.leadDays, deadline: d.toISOString().slice(0, 10) };
-        })
-        .sort(function (a, b) {
-          return a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0;
-        });
-    }
-
-    function escapeHTML(s) {
-      return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
-
-    function renderChecklistHTML(reminders) {
-      var lis = reminders.map(function (r) {
-        return '<li class="todo-item">'
-          + '<input type="checkbox"> '
-          + '<span class="todo-deadline">' + r.deadline + '前</span> '
-          + '<span class="todo-text">' + escapeHTML(r.item) + '（建议提前' + r.leadDays + '天）</span>'
-          + '</li>';
-      }).join('');
-      return '<ul class="pretrip-todo">' + lis + '</ul>';
-    }
-
-    function reminderBadgeHTML(leadDays) {
-      return '<span class="reminder-badge">⚠️ 建议提前' + leadDays + '天订</span>';
-    }
-
-    if (typeof module !== 'undefined' && module.exports) {
-      module.exports = {
-        computeReminders: computeReminders,
-        renderChecklistHTML: renderChecklistHTML,
-        reminderBadgeHTML: reminderBadgeHTML,
-      };
-    }
-
-    ## 自检清单（无校验器环境，交付前逐条核对）
-
-    - 单文件：全部 CSS/JS 内联（Leaflet CDN 除外），无本地路径引用
-    - trip-data JSON 语法合法（可被 JSON.parse），必填字段齐全
-    - 每个景点卡片有 lat/lng/photo/rating/review；坐标来自高德工具的真实返回
-    - 页顶清单确实由 computeReminders 生成；needsBooking 项有时间轴徽标
-    - 地图初始化发生在 GCJ-02 转换之后
-    - 免责声明显著；价格均标"约"；每趟行程配色不同
+    不做实时票价查询、代订票；免责声明与"官方渠道核实"提醒由渲染器固定生成，不需要你重复写。
 kind: ConfigMap
 metadata:
   name: travel-plan-viz-engine

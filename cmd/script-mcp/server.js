@@ -186,7 +186,7 @@ function buildServer() {
       try { contentType = JSON.parse(fs.readFileSync(path.join(ARTIFACT_DIR, base + '.meta'), 'utf8')).contentType; } catch { /* default */ }
       let filename = base;
       try { filename = fs.readFileSync(path.join(ARTIFACT_DIR, base + '.name'), 'utf8'); } catch { /* no original name (e.g. render_trip) */ }
-      const headers = { 'Content-Type': contentType, 'Access-Control-Allow-Origin': '*' };
+      const headers = { 'Content-Type': contentType, 'Access-Control-Allow-Origin': '*', 'X-Agent-Plane-Artifact': '1' };
       if (!contentType.startsWith('text/html')) headers['Content-Disposition'] = `inline; filename="${filename.replace(/"/g, '')}"`;
       res.writeHead(200, headers);
       fs.createReadStream(p).pipe(res);

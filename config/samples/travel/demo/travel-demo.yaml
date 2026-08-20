@@ -1,16 +1,25 @@
-# 可运行的旅行 demo：旅行规划助手（聊天 UI + 高德真实数据 + travel-plan-viz skill）
+# 可运行的旅行 demo：旅行规划助手（聊天 UI + 高德真实数据 + Skill/MCP 双引擎）
 #
 # 这是 travel 样例的"全接线"版本：Agent 带 spec.runtime（agent-runtime 镜像的
-# serve 模式，提供现代聊天 UI 与 /api/chat）、三个高德 MCP 工具（externalEndpoint
-# 模式，无集群内 workload）、以及把 github.com/zexuanw958-svg/travel-plan-viz
-# 适配成 Skill CR 的两个对象（路由 + 引擎；引擎正文内联了上游的 map.js/reminders.js
-# 源码，见 travel-plan-viz-engine.md）。聊天里说"帮我做北京 4 天 3 晚计划"，
-# Agent 会调高德工具取真实 POI/天气，产出单文件 HTML 行程页——UI 会把回复中的
-# html 围栏渲染成可预览/可下载的卡片。
+# serve 模式，提供现代聊天 UI、/api/chat、/api/artifact 代理）、三个高德 MCP 工具
+# （externalEndpoint 模式，无集群内 workload）、以及一个通用脚本执行 MCP
+# server（script-tools，image 模式，见 ../../../cmd/script-mcp）——它把
+# github.com/zexuanw958-svg/travel-plan-viz 的机械部分（校验、渲染、坐标纠偏）
+# 做成 render_trip 工具，另外还带 run_script（Code Interpreter：模型可执行任意
+# python/node 脚本）与 check_urls。聊天里说"帮我做北京 4 天 3 晚计划"：Agent 调
+# 高德工具取真实数据 → 组 trip JSON → 调 render_trip 校验渲染 → 回复里引用
+# [artifact:id] → UI 通过 runtime 代理拉取，渲染成可预览/下载的行程页卡片
+# （HTML 全程不进模型上下文）。
 #
-# 前置：operator + registry 已部署（make deploy-kind），agent-runtime 镜像已
-# 构建并加载（docker build -f Dockerfile.agent-runtime -t agent-plane-runtime:dev .
-# && kind load docker-image agent-plane-runtime:dev --name agent-plane）。
+# 前置：operator + registry 已部署（make deploy-kind），两个镜像已构建并加载：
+#   docker build -f Dockerfile.agent-runtime -t agent-plane-runtime:dev .
+#   docker build -f Dockerfile.script-mcp -t script-mcp:dev cmd/script-mcp
+#   kind load docker-image agent-plane-runtime:dev script-mcp:dev --name agent-plane
+#
+# 注意（kind+podman 已知坑）：两个镜像若共享 base layer，kind load 偶发把新镜像
+# 的 tag 错点到旧 image ID 上（server 起来是另一个二进制）。校验：
+#   docker exec agent-plane-control-plane crictl images | grep -E "script-mcp|agent-plane-runtime"
+# 两行的 IMAGE ID 必须不同；相同就 `crictl rmi <重名的 tag>` 后重新 kind load。
 #
 # 使用：
 #   kubectl create ns travel-demo
@@ -102,6 +111,66 @@ spec:
       city: {type: string, description: "city name in Chinese, e.g. 北京"}
     required: ["city"]
 ---
+# The general-purpose script-execution MCP (cmd/script-mcp): render_trip does
+# the mechanical half of travel-plan-viz (validate + render + re-validate),
+# run_script is a Code Interpreter primitive, check_urls verifies image links.
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: MCPServer
+metadata: {name: script-tools, namespace: travel-demo}
+spec:
+  image: docker.io/library/script-mcp:dev
+  transport: http
+  port: 8080
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Tool
+metadata: {name: render-trip, namespace: travel-demo}
+spec:
+  type: mcp
+  description: Render a validated single-file travel itinerary HTML page from a trip JSON document; returns an artifactId, never the HTML itself.
+  mcpServerRef: {name: script-tools}
+  mcpToolName: render_trip
+  inputSchema:
+    type: object
+    properties:
+      trip: {type: object}
+      design: {type: object}
+    required: ["trip"]
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Tool
+metadata: {name: run-script, namespace: travel-demo}
+spec:
+  type: mcp
+  description: Execute a python or node script and return stdout/stderr and any files it wrote to ./out/ as artifacts.
+  mcpServerRef: {name: script-tools}
+  mcpToolName: run_script
+  inputSchema:
+    type: object
+    properties:
+      language: {type: string, enum: ["python", "node"]}
+      source: {type: string}
+      stdin: {type: string}
+      timeoutMs: {type: number}
+    required: ["language", "source"]
+---
+apiVersion: core.hkmdxlftjf.io/v1alpha1
+kind: Tool
+metadata: {name: check-urls, namespace: travel-demo}
+spec:
+  type: mcp
+  description: Check a batch of URLs for reachability (HTTP < 400); use before citing image URLs.
+  mcpServerRef: {name: script-tools}
+  mcpToolName: check_urls
+  inputSchema:
+    type: object
+    properties:
+      urls: {type: array, items: {type: string}}
+    required: ["urls"]
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata: {name: travel-agent, namespace: travel-demo}
@@ -125,7 +194,7 @@ apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Agent
 metadata: {name: travel-agent, namespace: travel-demo}
 spec:
-  description: 旅行规划助手 — 高德真实数据 + 行程可视化 skill，产出单文件 HTML 行程页。
+  description: 旅行规划助手 — 高德真实数据 + render_trip/run_script/check_urls，产出单文件 HTML 行程页。
   modelRef: {name: llm-model}
   workflowRef: {name: travel-planning}
   promptRef: {name: travel-planner-prompt}
@@ -133,6 +202,9 @@ spec:
     - {name: amap-poi-search}
     - {name: amap-around-search}
     - {name: amap-weather}
+    - {name: render-trip}
+    - {name: run-script}
+    - {name: check-urls}
   skillRefs:
     - {name: travel-plan-viz}
     - {name: travel-plan-viz-engine}

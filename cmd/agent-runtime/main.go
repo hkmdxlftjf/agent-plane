@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -414,8 +415,18 @@ func serveHTTP(ctx context.Context, name string, cfg *sdk.AgentConfig, base agen
 	}
 
 	toolNames := make([]string, 0, len(cfg.Tools))
+	// mcpEndpoints are the distinct MCP tool endpoints this Agent can reach —
+	// an artifact id (from a tool like render_trip or run_script) could have
+	// come from any of them, and the browser cannot resolve in-cluster Service
+	// DNS directly, so /api/artifact proxies through this list.
+	var mcpEndpoints []string
+	seenEndpoint := map[string]bool{}
 	for _, t := range cfg.Tools {
 		toolNames = append(toolNames, t.Name)
+		if t.Type == "mcp" && t.Endpoint != "" && !seenEndpoint[t.Endpoint] {
+			seenEndpoint[t.Endpoint] = true
+			mcpEndpoints = append(mcpEndpoints, t.Endpoint)
+		}
 	}
 
 	mux := http.NewServeMux()
@@ -430,6 +441,39 @@ func serveHTTP(ctx context.Context, name string, cfg *sdk.AgentConfig, base agen
 	})
 	mux.HandleFunc("/api/info", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"agent": name, "model": cfg.Model.ModelName, "tools": toolNames})
+	})
+	// /api/artifact/{id} proxies a tool-produced artifact (e.g. render_trip's
+	// rendered page) so the chat UI can preview/download it without knowing
+	// which MCP server, or in-cluster Service address, produced it. Tries each
+	// known MCP endpoint's /artifacts/{id} until one answers 200.
+	mux.HandleFunc("/api/artifact/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/artifact/")
+		if id == "" {
+			http.NotFound(w, r)
+			return
+		}
+		client := &http.Client{Timeout: 10 * time.Second}
+		for _, ep := range mcpEndpoints {
+			resp, err := client.Get(strings.TrimRight(ep, "/") + "/artifacts/" + id)
+			if err != nil {
+				continue
+			}
+			// Only script-mcp-style servers set this header; an unrelated MCP
+			// endpoint (e.g. an external vendor API) can return 200 for any path
+			// with its own error body, which a bare status check would accept.
+			if resp.StatusCode == http.StatusOK && resp.Header.Get("X-Agent-Plane-Artifact") == "1" {
+				for _, h := range []string{"Content-Type", "Content-Disposition"} {
+					if v := resp.Header.Get(h); v != "" {
+						w.Header().Set(h, v)
+					}
+				}
+				_, _ = io.Copy(w, resp.Body)
+				_ = resp.Body.Close()
+				return
+			}
+			_ = resp.Body.Close()
+		}
+		http.Error(w, "artifact not found on any known tool endpoint", http.StatusNotFound)
 	})
 	mux.HandleFunc("/api/chat", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -597,22 +641,24 @@ function inline(s){
   return s;
 }
 
-// Minimal fenced-block-aware markdown. The html fence is intercepted before
-// generic rendering because it becomes an artifact card, not a <pre>.
+// Minimal fenced-block-aware markdown. A line matching [artifact:ID] becomes
+// an artifact card fetched from /api/artifact/ID — the deliverable of tools
+// like render_trip is referenced by id, never inlined in the model's reply.
 function md(src){
   var lines=src.replace(/\r/g,'').split('\n');
   var fence=BT+BT+BT, out='', para=[], i=0;
   function flush(){ if(para.length){ out+='<p>'+inline(para.join('<br>'))+'</p>'; para=[]; } }
   while(i<lines.length){
     var l=lines[i];
+    var art=l.trim().match(/^\[artifact:([a-zA-Z0-9:_.-]+)\]$/);
+    if(art){ flush(); out+=artifactCard(art[1]); i++; continue; }
     if(l.indexOf(fence)===0){
       flush();
       var lang=l.slice(3).trim(), buf=[];
       i++;
       while(i<lines.length && lines[i].indexOf(fence)!==0){ buf.push(lines[i]); i++; }
       i++;
-      if(lang==='html'){ out+=artifact(buf.join('\n')); }
-      else { out+='<pre><code>'+esc(buf.join('\n'))+'</code></pre>'; }
+      out+='<pre><code>'+esc(buf.join('\n'))+'</code></pre>';
       continue;
     }
     var h=l.match(/^(#{1,3})\s+(.*)/);
@@ -635,35 +681,30 @@ function md(src){
   return out || '<p>'+esc(src)+'</p>';
 }
 
-// An html fence (three backticks + html) becomes a downloadable/previewable
-// artifact card — the deliverable of skills like travel-plan-viz is exactly
-// such a page.
-function artifact(html){
-  var id='a'+Math.random().toString(36).slice(2,8);
-  var kb=(html.length/1024).toFixed(1);
-  return '<div class="art" id="'+id+'"><div class="art-h"><span class="ic">🗺️</span>'+
-    '<span class="fn">行程计划页</span><span class="meta">单文件 HTML · '+kb+' KB</span><span class="sp"></span>'+
-    '<button data-a="pv">预览</button><button data-a="dl">下载</button></div></div>'+
-    '<textarea class="artsrc" style="display:none">'+esc(html)+'</textarea>';
+// artifactCard renders a placeholder that lazily fetches the artifact's bytes
+// from /api/artifact/:id on first preview/download — the id round-trips
+// through the model's reply, the bytes never do.
+function artifactCard(id){
+  return '<div class="art" data-id="'+esc(id)+'"><div class="art-h"><span class="ic">📄</span>'+
+    '<span class="fn">生成的文件</span><span class="meta">'+esc(id)+'</span><span class="sp"></span>'+
+    '<button data-a="pv">预览</button><button data-a="dl">下载</button></div></div>';
 }
 document.addEventListener('click', function(e){
   var b=e.target.closest('.art button'); if(!b) return;
-  var card=b.closest('.art'), src=card.nextElementSibling.value, name='旅行计划.html';
+  var card=b.closest('.art'), id=card.dataset.id, url='/api/artifact/'+encodeURIComponent(id);
   if(b.dataset.a==='dl'){
-    var u=URL.createObjectURL(new Blob([src],{type:'text/html'}));
-    var a=document.createElement('a'); a.href=u; a.download=name; a.click(); URL.revokeObjectURL(u);
+    var a=document.createElement('a'); a.href=url; a.download=''; a.click();
   }else{
-    document.getElementById('pv').srcdoc=src;
+    document.getElementById('pv').src=url;
     document.getElementById('modal').classList.add('on');
     document.getElementById('dl2').onclick=function(){
-      var u=URL.createObjectURL(new Blob([src],{type:'text/html'}));
-      var a=document.createElement('a'); a.href=u; a.download=name; a.click(); URL.revokeObjectURL(u);
+      var a=document.createElement('a'); a.href=url; a.download=''; a.click();
     };
   }
 });
 document.getElementById('close').onclick=function(){
   document.getElementById('modal').classList.remove('on');
-  document.getElementById('pv').srcdoc='';
+  document.getElementById('pv').src='about:blank';
 };
 
 function add(kind, text){
