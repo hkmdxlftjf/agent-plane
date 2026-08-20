@@ -91,6 +91,9 @@ cmd_apply() {
   echo ">>> applying config/registry with image $REGISTRY_IMG"
   (cd config/registry && "$KUSTOMIZE_BIN" edit set image agent-plane-registry="$REGISTRY_IMG")
   "$KUSTOMIZE_BIN" build config/registry | kubectl apply -f -
+  # Same dev tag on every build: apply alone sees no template diff and keeps
+  # the old pods. Restart to pick up the freshly loaded image.
+  kubectl rollout restart deployment/agent-plane-controller-manager deployment/agent-plane-registry -n "$NAMESPACE"
   mv "$backup2" "$reg"
   trap - EXIT
 }
