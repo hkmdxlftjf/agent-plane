@@ -159,7 +159,15 @@ func indexSpecs() []indexSpec {
 			return refNamesOf(o.(*corev1alpha1.Agent).Spec.KnowledgeBaseRefs)
 		}},
 		{&corev1alpha1.Agent{}, idxAgentCredentials, func(o client.Object) []string {
-			return refNamesOf(o.(*corev1alpha1.Agent).Spec.CredentialRefs)
+			a := o.(*corev1alpha1.Agent)
+			names := refNamesOf(a.Spec.CredentialRefs)
+			// The workspace credential is a Credential reference too: without
+			// it in this index, a workspace Agent Degraded on a missing git
+			// credential stays asleep when the Credential is created.
+			if ws := a.Spec.Workspace; ws != nil && ws.CredentialRef != nil && ws.CredentialRef.Name != "" {
+				names = append(names, ws.CredentialRef.Name)
+			}
+			return names
 		}},
 		{&corev1alpha1.Agent{}, idxAgentClass, func(o client.Object) []string {
 			return refName(o.(*corev1alpha1.Agent).Spec.AgentClassRef)

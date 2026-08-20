@@ -293,11 +293,29 @@ var _ = Describe("Agent workspace", func() {
 			deleteIfExists(ctx, types.NamespacedName{Name: agentName + "-workspace", Namespace: nsDefault}, &corev1.PersistentVolumeClaim{})
 		})
 
-		It("fails the reconcile", func() {
+		It("goes Degraded and skips the runtime, rather than failing the reconcile", func() {
+			// The workspace git credential follows the house rule for every
+			// other reference: report it in status, materialize nothing, and
+			// converge when the Credential shows up. An error requeue here
+			// would leave a previously-Ready Agent's status stale and — with
+			// no watch on the credential — wait out the full backoff.
 			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring(testMissingName))
+			Expect(err).NotTo(HaveOccurred())
+
+			agent := &corev1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, agentKey, agent)).To(Succeed())
+			Expect(agent.Status.Phase).To(Equal(corev1alpha1.AgentPhaseDegraded))
+			cond := meta.FindStatusCondition(agent.Status.Conditions, corev1alpha1.ConditionReady)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(corev1alpha1.ReasonReferenceMissing))
+			Expect(cond.Message).To(ContainSubstring(testMissingName))
+
+			// No runtime pod: the clone step cannot authenticate until the
+			// Credential exists, so a Deployment would only crash-loop.
+			dep := &appsv1.Deployment{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: agentName + "-runtime", Namespace: nsDefault}, dep)
+			Expect(apierrors.IsNotFound(err)).To(BeTrue(), "no runtime Deployment may exist while the credential is missing")
 		})
 	})
 
