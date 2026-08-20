@@ -98,12 +98,34 @@ async function main() {
       const sessionId = parsed.sessionId || 'default';
       const message = parsed.message;
       if (!message) { res.writeHead(400); res.end('expected {sessionId, message}'); return; }
-      try {
-        const answer = await getSession(sessionId).send(message);
-        writeJSON(res, { answer });
-      } catch (e) {
-        writeJSON(res, { error: e.message });
+
+      const wantsStream = (req.headers.accept || '').includes('text/event-stream');
+      if (!wantsStream) {
+        // Back-compat one-shot path (e.g. a curl/script caller).
+        try {
+          const answer = await getSession(sessionId).send(message);
+          writeJSON(res, { answer });
+        } catch (e) {
+          writeJSON(res, { error: e.message });
+        }
+        return;
       }
+
+      // Streaming path: reasoning/tool-call/tool-result/answer-delta events
+      // as Server-Sent Events, so the UI can show what the agent is doing
+      // instead of a multi-minute silent wait — see agent.js's sendStream.
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      });
+      const send = (event) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+      try {
+        for await (const ev of getSession(sessionId).sendStream(message)) send(ev);
+      } catch (e) {
+        send({ type: 'error', message: e.message });
+      }
+      res.end();
       return;
     }
     res.writeHead(404); res.end();
