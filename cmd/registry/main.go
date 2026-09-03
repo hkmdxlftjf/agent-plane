@@ -304,20 +304,6 @@ func (s *server) buildConfigFrom(ctx context.Context, agent *corev1alpha1.Agent)
 			s.log.Error(err, "resolve promptTemplate", "promptTemplate", eff.PromptRef.Name)
 		}
 	}
-	// Resolve the Workflow step graph the same way. Agent Plane never executes
-	// it — the runtime interprets the engine-neutral graph.
-	if eff.WorkflowRef != nil {
-		var wf corev1alpha1.Workflow
-		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: eff.WorkflowRef.Name}, &wf); err == nil {
-			wv := &sdk.Workflow{Name: wf.Name, Engine: wf.Spec.Engine, Version: wf.Spec.Version}
-			for _, st := range wf.Spec.Steps {
-				wv.Steps = append(wv.Steps, sdk.WorkflowStep{Name: st.Name, Type: st.Type, Next: st.Next})
-			}
-			out.Workflow = wv
-		} else {
-			s.log.Error(err, "resolve workflow", "workflow", eff.WorkflowRef.Name)
-		}
-	}
 	if eff.ModelRef != nil {
 		var model corev1alpha1.Model
 		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: eff.ModelRef.Name}, &model); err == nil {
@@ -372,22 +358,6 @@ func (s *server) buildConfigFrom(ctx context.Context, agent *corev1alpha1.Agent)
 			continue
 		}
 		out.Skills = append(out.Skills, sv)
-	}
-	for _, ref := range eff.MemoryRefs {
-		mv, err := s.resolveMemory(ctx, agent.Namespace, ref.Name)
-		if err != nil {
-			s.log.Error(err, "resolve memory", "memory", ref.Name)
-			continue
-		}
-		out.Memories = append(out.Memories, mv)
-	}
-	for _, ref := range eff.KnowledgeBaseRefs {
-		kv, err := s.resolveKnowledgeBase(ctx, agent.Namespace, ref.Name)
-		if err != nil {
-			s.log.Error(err, "resolve knowledgeBase", "knowledgeBase", ref.Name)
-			continue
-		}
-		out.Knowledge = append(out.Knowledge, kv)
 	}
 	out.Policy = s.resolvePolicy(ctx, agent.Namespace, eff)
 	return out, nil
@@ -515,48 +485,6 @@ func (s *server) resolveSkill(ctx context.Context, ns, name string) (sdk.Skill, 
 		}
 	}
 	return sv, nil
-}
-
-// resolveMemory loads a Memory and returns its backend + the Secret coordinates
-// (never the value) of its connection Credential.
-func (s *server) resolveMemory(ctx context.Context, ns, name string) (sdk.Memory, error) {
-	var mem corev1alpha1.Memory
-	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &mem); err != nil {
-		return sdk.Memory{}, err
-	}
-	mv := sdk.Memory{Name: mem.Name, Backend: string(mem.Spec.Backend), Namespace: mem.Spec.Namespace}
-	if mem.Spec.ConnectionRef != nil {
-		var cred corev1alpha1.Credential
-		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: mem.Spec.ConnectionRef.Name}, &cred); err == nil {
-			mv.SecretName = cred.Spec.SecretRef.Name
-			mv.SecretKey = cred.Spec.SecretRef.Key
-		}
-	}
-	return mv, nil
-}
-
-// resolveKnowledgeBase loads a KnowledgeBase and returns its source coordinates,
-// resolving the embedding Model name and access-credential Secret coordinates.
-func (s *server) resolveKnowledgeBase(ctx context.Context, ns, name string) (sdk.KnowledgeBase, error) {
-	var kb corev1alpha1.KnowledgeBase
-	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &kb); err != nil {
-		return sdk.KnowledgeBase{}, err
-	}
-	kv := sdk.KnowledgeBase{Name: kb.Name, Source: string(kb.Spec.Source), URI: kb.Spec.URI}
-	if kb.Spec.EmbeddingModelRef != nil {
-		var model corev1alpha1.Model
-		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: kb.Spec.EmbeddingModelRef.Name}, &model); err == nil {
-			kv.EmbeddingModel = model.Spec.ModelName
-		}
-	}
-	if kb.Spec.CredentialRef != nil {
-		var cred corev1alpha1.Credential
-		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: kb.Spec.CredentialRef.Name}, &cred); err == nil {
-			kv.SecretName = cred.Spec.SecretRef.Name
-			kv.SecretKey = cred.Spec.SecretRef.Key
-		}
-	}
-	return kv, nil
 }
 
 func writeSSE(w io.Writer, cfg sdk.AgentConfig) {

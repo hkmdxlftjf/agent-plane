@@ -11,9 +11,8 @@
 #   WeatherQueryAgent     + MCP tool →  Tool weather (mcp, shared sample)
 #   HotelAgent            + MCP tool →  Tool hotel-search (mcp)
 #   PlannerAgent system prompt       →  PromptTemplate travel-planner-prompt
-#   plan_trip() pipeline             →  Workflow travel-planning (declared graph)
-#   HelloAgents runtime              →  any runtime; the SDK's
-#                                       examples/workflow-runner interprets it
+#   plan_trip() pipeline             →  the planner prompt's own rules
+#   HelloAgents runtime              →  any runtime
 #
 # The MCP tools are served by the sample orders-mcp server (cmd/example-mcp),
 # which ships canned attraction/hotel data and live wttr.in weather — a
@@ -23,31 +22,6 @@
 # Credential / MCPServer orders-mcp):
 #
 #   kubectl apply -f config/samples/travel/ -n <ns>
-#
-# Then run the workflow interpreter from the SDK repo:
-#
-#   go run ./examples/workflow-runner --namespace <ns> --name travel-agent \
-#     --prompt "Plan a 3-day history-focused trip to Beijing, comfort hotels."
-apiVersion: core.hkmdxlftjf.io/v1alpha1
-kind: Workflow
-metadata:
-  name: travel-planning
-spec:
-  engine: agentloop        # interpreted by the SDK's examples/workflow-runner
-  version: "1.0.0"
-  steps:
-    - name: plan           # decompose the request (city, days, preferences, budget)
-      type: planner
-      next: ["research"]
-    - name: research       # call attraction/weather/hotel tools per the plan
-      type: tool
-      next: ["review"]
-    - name: review         # judge the draft itinerary; loop back if it's lacking
-      type: reflect
-      next: ["research", "done"]
-    - name: done
-      type: finish
----
 apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: PromptTemplate
 metadata:
@@ -118,8 +92,6 @@ spec:
   description: Travel-planning agent (hello-agents ch.13 adapted to Agent Plane).
   modelRef:
     name: llm-model
-  workflowRef:
-    name: travel-planning
   promptRef:
     name: travel-planner-prompt
   toolRefs:

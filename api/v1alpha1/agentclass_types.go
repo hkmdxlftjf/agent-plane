@@ -32,10 +32,6 @@ type AgentClassSpec struct {
 	// +optional
 	DefaultModelRef *LocalReference `json:"defaultModelRef,omitempty"`
 
-	// defaultWorkflowRef is applied when an Agent omits a workflowRef.
-	// +optional
-	DefaultWorkflowRef *LocalReference `json:"defaultWorkflowRef,omitempty"`
-
 	// defaultPromptRef is applied when an Agent omits a promptRef.
 	// +optional
 	DefaultPromptRef *LocalReference `json:"defaultPromptRef,omitempty"`

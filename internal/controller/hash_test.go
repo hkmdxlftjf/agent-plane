@@ -61,7 +61,7 @@ func TestConfigHashDeterminism(t *testing.T) {
 
 	// An added reference changes the hash.
 	added := append([]resolvedRef{}, base...)
-	added = append(added, resolvedRef{Kind: kindMemory, Name: "mem", ResourceVersion: "1"})
+	added = append(added, resolvedRef{Kind: kindCredential, Name: "cred", ResourceVersion: "1"})
 	h4, err := configHash(added)
 	if err != nil {
 		t.Fatalf("configHash returned error: %v", err)

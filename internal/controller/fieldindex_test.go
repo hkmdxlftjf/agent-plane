@@ -403,15 +403,12 @@ func TestEveryAgentDependencyKindIsIndexed(t *testing.T) {
 		spec  func(*corev1alpha1.Agent)
 	}{
 		{"model", idxAgentModel, func(a *corev1alpha1.Agent) { a.Spec.ModelRef = ref(dep) }},
-		{"workflow", idxAgentWorkflow, func(a *corev1alpha1.Agent) { a.Spec.WorkflowRef = ref(dep) }},
 		{"prompt", idxAgentPrompt, func(a *corev1alpha1.Agent) { a.Spec.PromptRef = ref(dep) }},
 		{"tools", idxAgentTools, func(a *corev1alpha1.Agent) { a.Spec.ToolRefs = refs(dep) }},
 		{"toolSets", idxAgentToolSets, func(a *corev1alpha1.Agent) { a.Spec.ToolSetRefs = refs(dep) }},
 		{"skills", idxAgentSkills, func(a *corev1alpha1.Agent) { a.Spec.SkillRefs = refs(dep) }},
-		{"memories", idxAgentMemories, func(a *corev1alpha1.Agent) { a.Spec.MemoryRefs = refs(dep) }},
 		{"policies", idxAgentPolicies, func(a *corev1alpha1.Agent) { a.Spec.PolicyRefs = refs(dep) }},
 		{"toolPolicies", idxAgentToolPolicies, func(a *corev1alpha1.Agent) { a.Spec.ToolPolicyRefs = refs(dep) }},
-		{"knowledgeBases", idxAgentKnowledge, func(a *corev1alpha1.Agent) { a.Spec.KnowledgeBaseRefs = refs(dep) }},
 		{"agentClass", idxAgentClass, func(a *corev1alpha1.Agent) { a.Spec.AgentClassRef = ref(dep) }},
 	}
 	for _, tc := range cases {

@@ -34,26 +34,6 @@ import (
 // those are the controllers' job via eventual consistency, so that GitOps can
 // apply resources in any order without admission rejecting them.
 
-// Validate reports the first structural problem in a WorkflowSpec, or nil.
-// Step names must be unique and every `next` target must name a declared step.
-func (s *WorkflowSpec) Validate() error {
-	names := make(map[string]bool, len(s.Steps))
-	for _, step := range s.Steps {
-		if names[step.Name] {
-			return fmt.Errorf("duplicate step name %q", step.Name)
-		}
-		names[step.Name] = true
-	}
-	for _, step := range s.Steps {
-		for _, next := range step.Next {
-			if !names[next] {
-				return fmt.Errorf("step %q references unknown next step %q", step.Name, next)
-			}
-		}
-	}
-	return nil
-}
-
 // Validate reports the first structural problem in a ToolPolicySpec, or nil.
 // A specific tool (not the "*" wildcard) may not appear with two different
 // actions.
@@ -99,17 +79,11 @@ func (s *AgentSpec) Validate() error {
 	if dup := firstDuplicate(refNames(s.SkillRefs)); dup != "" {
 		return fmt.Errorf("duplicate skillRef %q", dup)
 	}
-	if dup := firstDuplicate(refNames(s.MemoryRefs)); dup != "" {
-		return fmt.Errorf("duplicate memoryRef %q", dup)
-	}
 	if dup := firstDuplicate(refNames(s.PolicyRefs)); dup != "" {
 		return fmt.Errorf("duplicate policyRef %q", dup)
 	}
 	if dup := firstDuplicate(refNames(s.ToolPolicyRefs)); dup != "" {
 		return fmt.Errorf("duplicate toolPolicyRef %q", dup)
-	}
-	if dup := firstDuplicate(refNames(s.KnowledgeBaseRefs)); dup != "" {
-		return fmt.Errorf("duplicate knowledgeBaseRef %q", dup)
 	}
 	if dup := firstDuplicate(refNames(s.CredentialRefs)); dup != "" {
 		return fmt.Errorf("duplicate credentialRef %q", dup)

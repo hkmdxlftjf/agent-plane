@@ -44,23 +44,3 @@ webhooks:
     resources:
     - tools
   sideEffects: None
-- admissionReviewVersions:
-  - v1
-  clientConfig:
-    service:
-      name: webhook-service
-      namespace: system
-      path: /validate-core-hkmdxlftjf-io-v1alpha1-workflow
-  failurePolicy: Fail
-  name: vworkflow-v1alpha1.kb.io
-  rules:
-  - apiGroups:
-    - core.hkmdxlftjf.io
-    apiVersions:
-    - v1alpha1
-    operations:
-    - CREATE
-    - UPDATE
-    resources:
-    - workflows
-  sideEffects: None

@@ -21,12 +21,9 @@ rules:
   - mcpservers
   - credentials
   - prompttemplates
-  - memories
   - policies
   - toolpolicies
   - agentclasses
-  - knowledgebases
-  - workflows
   verbs: ["get", "list", "watch"]
 # ConfigMaps only — Skill instruction content may live in a ConfigMap. Still NO
 # access to Secrets: runtimes read Secret values (model keys, memory DSNs) themselves.

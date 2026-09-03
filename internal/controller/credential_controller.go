@@ -33,8 +33,8 @@ import (
 )
 
 // CredentialReconciler reconciles a Credential object. It verifies that the
-// referenced Secret and key actually exist, so downstream consumers (Models,
-// Memory) can trust a Ready Credential instead of failing at request time.
+// referenced Secret and key actually exist, so downstream consumers (Models)
+// can trust a Ready Credential instead of failing at request time.
 type CredentialReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme

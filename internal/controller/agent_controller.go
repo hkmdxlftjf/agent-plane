@@ -134,7 +134,7 @@ type peerRef struct {
 
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agents,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agents/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=models;workflows;prompttemplates;tools;toolsets;skills;memories;policies;toolpolicies;agentclasses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=models;prompttemplates;tools;toolsets;skills;policies;toolpolicies;agentclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create
@@ -306,10 +306,6 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 		targets = append(targets, target{kind: kindModel, name: eff.ModelRef.Name, obj: &corev1alpha1.Model{}})
 		res.declared.Model = eff.ModelRef.Name
 	}
-	if eff.WorkflowRef != nil {
-		targets = append(targets, target{kind: "Workflow", name: eff.WorkflowRef.Name, obj: &corev1alpha1.Workflow{}})
-		res.declared.Workflow = eff.WorkflowRef.Name
-	}
 	if eff.PromptRef != nil {
 		targets = append(targets, target{kind: "PromptTemplate", name: eff.PromptRef.Name, obj: &corev1alpha1.PromptTemplate{}})
 	}
@@ -322,18 +318,11 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 	for _, ref := range eff.SkillRefs {
 		targets = append(targets, target{kind: "Skill", name: ref.Name, obj: &corev1alpha1.Skill{}})
 	}
-	for _, ref := range eff.MemoryRefs {
-		targets = append(targets, target{kind: kindMemory, name: ref.Name, obj: &corev1alpha1.Memory{}})
-		res.declared.Memories = append(res.declared.Memories, ref.Name)
-	}
 	for _, ref := range eff.PolicyRefs {
 		targets = append(targets, target{kind: "Policy", name: ref.Name, obj: &corev1alpha1.Policy{}})
 	}
 	for _, ref := range eff.ToolPolicyRefs {
 		targets = append(targets, target{kind: "ToolPolicy", name: ref.Name, obj: &corev1alpha1.ToolPolicy{}})
-	}
-	for _, ref := range eff.KnowledgeBaseRefs {
-		targets = append(targets, target{kind: "KnowledgeBase", name: ref.Name, obj: &corev1alpha1.KnowledgeBase{}})
 	}
 	// Appended last, and deliberately so. The order of this slice is the order the
 	// config hash is computed over, so putting credentials at the end means an
@@ -482,12 +471,10 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&corev1alpha1.Agent{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		// Model/Workflow/Prompt/Policy can be inherited from an AgentClass, so each
+		// Model/Prompt/Policy can be inherited from an AgentClass, so each
 		// also consults the matching class index.
 		Watches(&corev1alpha1.Model{},
 			r.agentsReferencingIndexed([]string{idxAgentModel}, []string{idxClassModel}, false)).
-		Watches(&corev1alpha1.Workflow{},
-			r.agentsReferencingIndexed([]string{idxAgentWorkflow}, []string{idxClassWorkflow}, false)).
 		Watches(&corev1alpha1.PromptTemplate{},
 			r.agentsReferencingIndexed([]string{idxAgentPrompt}, []string{idxClassPrompt}, false)).
 		Watches(&corev1alpha1.Policy{},
@@ -502,12 +489,8 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// hand them down.
 		Watches(&corev1alpha1.Skill{},
 			r.agentsReferencingIndexed([]string{idxAgentSkills}, []string{idxClassSkills}, false)).
-		Watches(&corev1alpha1.Memory{},
-			r.agentsReferencingIndexed([]string{idxAgentMemories}, nil, false)).
 		Watches(&corev1alpha1.ToolPolicy{},
 			r.agentsReferencingIndexed([]string{idxAgentToolPolicies}, []string{idxClassToolPolicies}, false)).
-		Watches(&corev1alpha1.KnowledgeBase{},
-			r.agentsReferencingIndexed([]string{idxAgentKnowledge}, nil, false)).
 		// Credentials the Agent mounts itself. Until now the Agent controller
 		// watched none, so a Credential created after the Agent left it Degraded
 		// with nothing to wake it.

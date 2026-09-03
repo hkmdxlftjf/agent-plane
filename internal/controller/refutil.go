@@ -36,9 +36,9 @@ type refTarget struct {
 // resolveTargets attempts to Get every target in the given namespace and
 // returns the "Kind/name" of any that do not exist. A get error other than
 // NotFound aborts and is returned. This is the shared building block behind the
-// reference-resolving controllers (Model, Memory, Tool, ToolSet,
-// KnowledgeBase, AgentClass); the Agent controller keeps its own variant
-// because it additionally needs ResourceVersions for config hashing.
+// reference-resolving controllers (Model, Tool, ToolSet, AgentClass); the Agent
+// controller keeps its own variant because it additionally needs
+// ResourceVersions for config hashing.
 func resolveTargets(ctx context.Context, c client.Client, ns string, targets []refTarget) ([]string, error) {
 	var missing []string
 	for _, t := range targets {

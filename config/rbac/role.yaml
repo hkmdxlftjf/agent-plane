@@ -52,9 +52,7 @@ rules:
   - agentclasses
   - agents
   - credentials
-  - knowledgebases
   - mcpservers
-  - memories
   - models
   - policies
   - prompttemplates
@@ -63,7 +61,6 @@ rules:
   - tools
   - toolsets
   - triggers
-  - workflows
   verbs:
   - get
   - list
@@ -74,9 +71,7 @@ rules:
   - agentclasses/status
   - agents/status
   - credentials/status
-  - knowledgebases/status
   - mcpservers/status
-  - memories/status
   - models/status
   - policies/status
   - prompttemplates/status
@@ -85,7 +80,6 @@ rules:
   - tools/status
   - toolsets/status
   - triggers/status
-  - workflows/status
   verbs:
   - get
   - patch

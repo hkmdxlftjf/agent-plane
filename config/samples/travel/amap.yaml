@@ -10,13 +10,7 @@
 #      who can read MCPServer resources can see it — fine for a demo key;
 #      self-host an image with the key in a Secret for anything sensitive.
 #   3. kubectl apply -f config/samples/travel/ -n <ns>   (needs the shared
-#      Model/Credential samples and travel-agent.yaml's Workflow + PromptTemplate)
-#
-# Run (from the SDK repo; the hosted endpoint is reachable from the host, so
-# no --tool-endpoint overrides are needed):
-#
-#   go run ./examples/workflow-runner --namespace <ns> --name travel-agent-amap \
-#     --prompt "Plan a 3-day history-focused trip to Beijing, comfort hotels."
+#      Model/Credential samples and travel-agent.yaml's PromptTemplate)
 apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: MCPServer
 metadata:
@@ -92,11 +86,9 @@ kind: Agent
 metadata:
   name: travel-agent-amap
 spec:
-  description: Travel-planning agent on real Amap data (workflow + prompt shared with travel-agent).
+  description: Travel-planning agent on real Amap data (prompt shared with travel-agent).
   modelRef:
     name: llm-model
-  workflowRef:
-    name: travel-planning
   promptRef:
     name: travel-planner-prompt
   toolRefs:

@@ -38,20 +38,16 @@ import (
 // The key names are arbitrary but must be unique per (indexed type, field).
 const (
 	idxAgentModel        = "spec.modelRef"
-	idxAgentWorkflow     = "spec.workflowRef"
 	idxAgentPrompt       = "spec.promptRef"
 	idxAgentTools        = "spec.toolRefs"
 	idxAgentToolSets     = "spec.toolSetRefs"
 	idxAgentSkills       = "spec.skillRefs"
-	idxAgentMemories     = "spec.memoryRefs"
 	idxAgentPolicies     = "spec.policyRefs"
 	idxAgentToolPolicies = "spec.toolPolicyRefs"
-	idxAgentKnowledge    = "spec.knowledgeBaseRefs"
 	idxAgentCredentials  = "spec.credentialRefs"
 	idxAgentClass        = "spec.agentClassRef"
 
 	idxClassModel        = "spec.defaultModelRef"
-	idxClassWorkflow     = "spec.defaultWorkflowRef"
 	idxClassPrompt       = "spec.defaultPromptRef"
 	idxClassPolicies     = "spec.defaultPolicyRefs"
 	idxClassTools        = "spec.defaultToolRefs"
@@ -62,10 +58,6 @@ const (
 	idxToolMCPServer    = "spec.mcpServerRef"
 	idxToolAgent        = "spec.agentRef"
 	idxModelCredential  = "spec.credentialRef"
-	idxMemoryConnection = "spec.connectionRef"
-	idxKBModel          = "spec.embeddingModelRef"
-	idxKBMemory         = "spec.memoryRef"
-	idxKBCredential     = "spec.credentialRef"
 	idxSkillConfigMap   = "spec.contentConfigMapRef"
 	idxCredentialSecret = "spec.secretRef"
 
@@ -131,9 +123,6 @@ func indexSpecs() []indexSpec {
 		{&corev1alpha1.Agent{}, idxAgentModel, func(o client.Object) []string {
 			return refName(o.(*corev1alpha1.Agent).Spec.ModelRef)
 		}},
-		{&corev1alpha1.Agent{}, idxAgentWorkflow, func(o client.Object) []string {
-			return refName(o.(*corev1alpha1.Agent).Spec.WorkflowRef)
-		}},
 		{&corev1alpha1.Agent{}, idxAgentPrompt, func(o client.Object) []string {
 			return refName(o.(*corev1alpha1.Agent).Spec.PromptRef)
 		}},
@@ -146,17 +135,11 @@ func indexSpecs() []indexSpec {
 		{&corev1alpha1.Agent{}, idxAgentSkills, func(o client.Object) []string {
 			return refNamesOf(o.(*corev1alpha1.Agent).Spec.SkillRefs)
 		}},
-		{&corev1alpha1.Agent{}, idxAgentMemories, func(o client.Object) []string {
-			return refNamesOf(o.(*corev1alpha1.Agent).Spec.MemoryRefs)
-		}},
 		{&corev1alpha1.Agent{}, idxAgentPolicies, func(o client.Object) []string {
 			return refNamesOf(o.(*corev1alpha1.Agent).Spec.PolicyRefs)
 		}},
 		{&corev1alpha1.Agent{}, idxAgentToolPolicies, func(o client.Object) []string {
 			return refNamesOf(o.(*corev1alpha1.Agent).Spec.ToolPolicyRefs)
-		}},
-		{&corev1alpha1.Agent{}, idxAgentKnowledge, func(o client.Object) []string {
-			return refNamesOf(o.(*corev1alpha1.Agent).Spec.KnowledgeBaseRefs)
 		}},
 		{&corev1alpha1.Agent{}, idxAgentCredentials, func(o client.Object) []string {
 			a := o.(*corev1alpha1.Agent)
@@ -176,9 +159,6 @@ func indexSpecs() []indexSpec {
 		// --- AgentClass -> the defaults it hands down ---
 		{&corev1alpha1.AgentClass{}, idxClassModel, func(o client.Object) []string {
 			return refName(o.(*corev1alpha1.AgentClass).Spec.DefaultModelRef)
-		}},
-		{&corev1alpha1.AgentClass{}, idxClassWorkflow, func(o client.Object) []string {
-			return refName(o.(*corev1alpha1.AgentClass).Spec.DefaultWorkflowRef)
 		}},
 		{&corev1alpha1.AgentClass{}, idxClassPrompt, func(o client.Object) []string {
 			return refName(o.(*corev1alpha1.AgentClass).Spec.DefaultPromptRef)
@@ -208,18 +188,6 @@ func indexSpecs() []indexSpec {
 		}},
 		{&corev1alpha1.Model{}, idxModelCredential, func(o client.Object) []string {
 			return refName(o.(*corev1alpha1.Model).Spec.CredentialRef)
-		}},
-		{&corev1alpha1.Memory{}, idxMemoryConnection, func(o client.Object) []string {
-			return refName(o.(*corev1alpha1.Memory).Spec.ConnectionRef)
-		}},
-		{&corev1alpha1.KnowledgeBase{}, idxKBModel, func(o client.Object) []string {
-			return refName(o.(*corev1alpha1.KnowledgeBase).Spec.EmbeddingModelRef)
-		}},
-		{&corev1alpha1.KnowledgeBase{}, idxKBMemory, func(o client.Object) []string {
-			return refName(o.(*corev1alpha1.KnowledgeBase).Spec.MemoryRef)
-		}},
-		{&corev1alpha1.KnowledgeBase{}, idxKBCredential, func(o client.Object) []string {
-			return refName(o.(*corev1alpha1.KnowledgeBase).Spec.CredentialRef)
 		}},
 		{&corev1alpha1.Skill{}, idxSkillConfigMap, func(o client.Object) []string {
 			if ref := o.(*corev1alpha1.Skill).Spec.ContentConfigMapRef; ref != nil && ref.Name != "" {
@@ -304,8 +272,8 @@ func requestsMatchingIndex(
 // following the two routes by which an Agent reaches a dependency *without*
 // naming it directly:
 //
-//   - Inheritance. ApplyClassDefaults fills an unset modelRef/workflowRef/
-//     promptRef/policyRefs from the Agent's AgentClass, so an Agent that names no
+//   - Inheritance. ApplyClassDefaults fills an unset modelRef/promptRef/
+//     policyRefs from the Agent's AgentClass, so an Agent that names no
 //     Model still breaks when the class's default Model changes. The index on the
 //     Agent cannot see that; we resolve it by finding the AgentClasses that name
 //     the dependency and then the Agents of those classes.
