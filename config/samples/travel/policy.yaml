@@ -24,7 +24,8 @@
 #
 # and on the data-plane side (the runtime logs its effective policy at startup):
 #
-#   go run ./cmd/agent-runtime --namespace <ns> --name travel-agent --chat
+#   (any runtime implementing docs/runtime-protocol.md logs its effective
+#    policy at startup)
 apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Policy
 metadata:

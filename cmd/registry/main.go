@@ -35,6 +35,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -175,7 +176,7 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request, ns, name s
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	cfg, err := s.buildConfig(ctx, ns, name)
+	cfg, _, err := s.buildConfig(ctx, ns, name)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("agent %s/%s: %v", ns, name, err), http.StatusNotFound)
 		return
@@ -189,6 +190,12 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request, ns, name s
 // handleWatch streams config updates for one Agent via Server-Sent Events. It
 // sends the current snapshot immediately, then a new event whenever the Agent
 // changes, plus periodic keepalives so idle connections stay open.
+//
+// Ordering guarantee: subscribe happens BEFORE the snapshot is built, so no
+// change in that window can be missed; and every frame carries the Agent's
+// resourceVersion, so frames that duplicate or regress below the snapshot
+// (the informer cache can lag the live read that built the snapshot) are
+// dropped — a client can only ever move forward.
 func (s *server) handleWatch(w http.ResponseWriter, r *http.Request, ns, name string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -201,14 +208,16 @@ func (s *server) handleWatch(w http.ResponseWriter, r *http.Request, ns, name st
 
 	key := ns + "/" + name
 
-	// Initial snapshot (best-effort — the agent may not exist yet).
-	if cfg, err := s.buildConfig(r.Context(), ns, name); err == nil {
-		writeSSE(w, cfg)
-		flusher.Flush()
-	}
-
 	sub := s.hub.subscribe(key)
 	defer s.hub.unsubscribe(key, sub)
+
+	// Initial snapshot (best-effort — the agent may not exist yet).
+	lastRV := ""
+	if cfg, rv, err := s.buildConfig(r.Context(), ns, name); err == nil {
+		writeSSE(w, cfg)
+		flusher.Flush()
+		lastRV = rv
+	}
 
 	keepalive := time.NewTicker(25 * time.Second)
 	defer keepalive.Stop()
@@ -217,8 +226,12 @@ func (s *server) handleWatch(w http.ResponseWriter, r *http.Request, ns, name st
 		select {
 		case <-r.Context().Done():
 			return
-		case cfg := <-sub.ch:
-			writeSSE(w, cfg)
+		case f := <-sub.ch:
+			if !isNewerRV(f.rv, lastRV) {
+				continue
+			}
+			lastRV = f.rv
+			writeSSE(w, f.cfg)
 			flusher.Flush()
 		case <-keepalive.C:
 			_, _ = io.WriteString(w, ": keepalive\n\n")
@@ -238,16 +251,19 @@ func (s *server) onAgentChange(ctx context.Context, obj interface{}) {
 		s.log.Error(err, "build config on change failed", "agent", agent.Namespace+"/"+agent.Name)
 		return
 	}
-	s.hub.broadcast(agent.Namespace+"/"+agent.Name, cfg)
+	s.hub.broadcast(agent.Namespace+"/"+agent.Name, agent.ResourceVersion, cfg)
 }
 
-// buildConfig loads the Agent by name and resolves its config.
-func (s *server) buildConfig(ctx context.Context, ns, name string) (sdk.AgentConfig, error) {
+// buildConfig loads the Agent by name and resolves its config. The returned
+// resourceVersion identifies the Agent the config was built from, so /watch
+// can order frames.
+func (s *server) buildConfig(ctx context.Context, ns, name string) (sdk.AgentConfig, string, error) {
 	var agent corev1alpha1.Agent
 	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &agent); err != nil {
-		return sdk.AgentConfig{}, err
+		return sdk.AgentConfig{}, "", err
 	}
-	return s.buildConfigFrom(ctx, &agent)
+	cfg, err := s.buildConfigFrom(ctx, &agent)
+	return cfg, agent.ResourceVersion, err
 }
 
 // buildConfigFrom resolves the config for an already-loaded Agent, enriching it
@@ -286,20 +302,6 @@ func (s *server) buildConfigFrom(ctx context.Context, agent *corev1alpha1.Agent)
 			out.Prompt = &sdk.Prompt{Name: pt.Name, System: pt.Spec.System}
 		} else {
 			s.log.Error(err, "resolve promptTemplate", "promptTemplate", eff.PromptRef.Name)
-		}
-	}
-	// Resolve the Workflow step graph the same way. Agent Plane never executes
-	// it — the runtime interprets the engine-neutral graph.
-	if eff.WorkflowRef != nil {
-		var wf corev1alpha1.Workflow
-		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: agent.Namespace, Name: eff.WorkflowRef.Name}, &wf); err == nil {
-			wv := &sdk.Workflow{Name: wf.Name, Engine: wf.Spec.Engine, Version: wf.Spec.Version}
-			for _, st := range wf.Spec.Steps {
-				wv.Steps = append(wv.Steps, sdk.WorkflowStep{Name: st.Name, Type: st.Type, Next: st.Next})
-			}
-			out.Workflow = wv
-		} else {
-			s.log.Error(err, "resolve workflow", "workflow", eff.WorkflowRef.Name)
 		}
 	}
 	if eff.ModelRef != nil {
@@ -357,22 +359,6 @@ func (s *server) buildConfigFrom(ctx context.Context, agent *corev1alpha1.Agent)
 		}
 		out.Skills = append(out.Skills, sv)
 	}
-	for _, ref := range eff.MemoryRefs {
-		mv, err := s.resolveMemory(ctx, agent.Namespace, ref.Name)
-		if err != nil {
-			s.log.Error(err, "resolve memory", "memory", ref.Name)
-			continue
-		}
-		out.Memories = append(out.Memories, mv)
-	}
-	for _, ref := range eff.KnowledgeBaseRefs {
-		kv, err := s.resolveKnowledgeBase(ctx, agent.Namespace, ref.Name)
-		if err != nil {
-			s.log.Error(err, "resolve knowledgeBase", "knowledgeBase", ref.Name)
-			continue
-		}
-		out.Knowledge = append(out.Knowledge, kv)
-	}
 	out.Policy = s.resolvePolicy(ctx, agent.Namespace, eff)
 	return out, nil
 }
@@ -411,10 +397,8 @@ func (s *server) resolvePolicy(ctx context.Context, ns string, eff corev1alpha1.
 	pv := &sdk.Policy{
 		Sources:           merged.Sources,
 		Models:            accessRuleView(merged.Models),
-		Memory:            accessRuleView(merged.Memory),
 		MCP:               accessRuleView(merged.MCP),
 		Tools:             accessRuleView(merged.Tools),
-		Workflows:         accessRuleView(merged.Workflows),
 		DefaultToolAction: string(merged.DefaultToolAction),
 	}
 	for _, r := range merged.ToolRules {
@@ -501,48 +485,6 @@ func (s *server) resolveSkill(ctx context.Context, ns, name string) (sdk.Skill, 
 	return sv, nil
 }
 
-// resolveMemory loads a Memory and returns its backend + the Secret coordinates
-// (never the value) of its connection Credential.
-func (s *server) resolveMemory(ctx context.Context, ns, name string) (sdk.Memory, error) {
-	var mem corev1alpha1.Memory
-	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &mem); err != nil {
-		return sdk.Memory{}, err
-	}
-	mv := sdk.Memory{Name: mem.Name, Backend: string(mem.Spec.Backend), Namespace: mem.Spec.Namespace}
-	if mem.Spec.ConnectionRef != nil {
-		var cred corev1alpha1.Credential
-		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: mem.Spec.ConnectionRef.Name}, &cred); err == nil {
-			mv.SecretName = cred.Spec.SecretRef.Name
-			mv.SecretKey = cred.Spec.SecretRef.Key
-		}
-	}
-	return mv, nil
-}
-
-// resolveKnowledgeBase loads a KnowledgeBase and returns its source coordinates,
-// resolving the embedding Model name and access-credential Secret coordinates.
-func (s *server) resolveKnowledgeBase(ctx context.Context, ns, name string) (sdk.KnowledgeBase, error) {
-	var kb corev1alpha1.KnowledgeBase
-	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &kb); err != nil {
-		return sdk.KnowledgeBase{}, err
-	}
-	kv := sdk.KnowledgeBase{Name: kb.Name, Source: string(kb.Spec.Source), URI: kb.Spec.URI}
-	if kb.Spec.EmbeddingModelRef != nil {
-		var model corev1alpha1.Model
-		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: kb.Spec.EmbeddingModelRef.Name}, &model); err == nil {
-			kv.EmbeddingModel = model.Spec.ModelName
-		}
-	}
-	if kb.Spec.CredentialRef != nil {
-		var cred corev1alpha1.Credential
-		if err := s.reader.Get(ctx, client.ObjectKey{Namespace: ns, Name: kb.Spec.CredentialRef.Name}, &cred); err == nil {
-			kv.SecretName = cred.Spec.SecretRef.Name
-			kv.SecretKey = cred.Spec.SecretRef.Key
-		}
-	}
-	return kv, nil
-}
-
 func writeSSE(w io.Writer, cfg sdk.AgentConfig) {
 	b, err := json.Marshal(cfg)
 	if err != nil {
@@ -557,8 +499,15 @@ type hub struct {
 	subs map[string]map[*subscriber]struct{}
 }
 
+// frame is one broadcast: the resolved config plus the Agent resourceVersion it
+// was built from, so consumers can discard duplicate or out-of-order frames.
+type frame struct {
+	rv  string
+	cfg sdk.AgentConfig
+}
+
 type subscriber struct {
-	ch chan sdk.AgentConfig
+	ch chan frame
 }
 
 func newHub() *hub {
@@ -566,7 +515,7 @@ func newHub() *hub {
 }
 
 func (h *hub) subscribe(key string) *subscriber {
-	sub := &subscriber{ch: make(chan sdk.AgentConfig, 8)}
+	sub := &subscriber{ch: make(chan frame, 8)}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.subs[key] == nil {
@@ -588,16 +537,39 @@ func (h *hub) unsubscribe(key string, sub *subscriber) {
 	close(sub.ch)
 }
 
+// subscriberCount reports how many watchers are attached to key.
+func (h *hub) subscriberCount(key string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.subs[key])
+}
+
 // broadcast delivers cfg to every subscriber of key. Sends are non-blocking:
 // a slow consumer drops intermediate updates but always converges, since each
 // event carries the full current config (not a delta).
-func (h *hub) broadcast(key string, cfg sdk.AgentConfig) {
+func (h *hub) broadcast(key, rv string, cfg sdk.AgentConfig) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for sub := range h.subs[key] {
 		select {
-		case sub.ch <- cfg:
+		case sub.ch <- frame{rv: rv, cfg: cfg}:
 		default:
 		}
 	}
+}
+
+// isNewerRV reports whether rv is strictly newer than floor, comparing
+// numerically (etcd resourceVersions are decimal numbers). Anything
+// unparseable is treated as newer — the client's configHash guard already
+// makes duplicate content a no-op, so err on delivering rather than dropping.
+func isNewerRV(rv, floor string) bool {
+	if floor == "" {
+		return true
+	}
+	n, errN := strconv.ParseUint(rv, 10, 64)
+	f, errF := strconv.ParseUint(floor, 10, 64)
+	if errN != nil || errF != nil {
+		return true
+	}
+	return n > f
 }

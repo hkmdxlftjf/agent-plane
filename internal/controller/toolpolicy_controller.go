@@ -36,9 +36,8 @@ type ToolPolicyReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=toolpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=toolpolicies,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=toolpolicies/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=toolpolicies/finalizers,verbs=update
 
 // Reconcile validates the ToolPolicy rules and publishes readiness.
 func (r *ToolPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

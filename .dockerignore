@@ -1,23 +1,16 @@
 # More info: https://docs.docker.com/engine/reference/builder/#dockerignore-file
-# Ignore everything by default and re-include only needed files
-**
+#
+# Deliberately a plain denylist. The previous ignore-all-then-re-include form
+# broke under buildah/podman, where a file cannot be re-included beneath an
+# excluded directory: nested Go sources were silently dropped and builds failed
+# with "package cmd/main.go is not in std". Explicit and boring works everywhere.
 
-# Re-include Go source files (but not *_test.go)
-!**/*.go
+# Build-irrelevant trees (bin/ alone is ~139MB of local tool binaries).
+.git
+.github
+.devcontainer
+bin
+dist
+
+# Tests never build inside the images.
 **/*_test.go
-
-# Re-include Go module files
-!go.mod
-!go.sum
-
-# Re-include the coding-agent image's non-Go build inputs. That image is not a Go
-# build at all — it is opencode plus a plugin — so without these the COPY steps
-# fail with "not found", which reads like a missing file rather than an exclusion.
-!hack/coding-agent-entrypoint.sh
-# A locally packed plugin tarball, for testing a change before publishing it
-# (see PLUGIN_TARBALL in Dockerfile.coding-agent). Unused in a release build.
-!*.tgz
-
-# The models catalog, copied from a local opencode cache for offline builds
-# (see MODELS_CATALOG in Dockerfile.coding-agent). Not part of a release build.
-!models-catalog.json

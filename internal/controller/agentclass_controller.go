@@ -28,7 +28,7 @@ import (
 )
 
 // AgentClassReconciler reconciles an AgentClass object. It validates that the
-// defaults an AgentClass hands down to Agents (model/workflow/prompt/policies)
+// defaults an AgentClass hands down to Agents (model/prompt/policies)
 // actually resolve, so a misconfigured class fails fast instead of silently
 // producing broken Agents.
 type AgentClassReconciler struct {
@@ -36,10 +36,9 @@ type AgentClassReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agentclasses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agentclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agentclasses/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agentclasses/finalizers,verbs=update
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=models;workflows;prompttemplates;policies,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=models;prompttemplates;policies,verbs=get;list;watch
 
 // Reconcile validates the AgentClass defaults and publishes readiness.
 func (r *AgentClassReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -53,9 +52,6 @@ func (r *AgentClassReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	targets := make([]refTarget, 0, 4)
 	if class.Spec.DefaultModelRef != nil {
 		targets = append(targets, refTarget{kindModel, class.Spec.DefaultModelRef.Name, &corev1alpha1.Model{}})
-	}
-	if class.Spec.DefaultWorkflowRef != nil {
-		targets = append(targets, refTarget{"Workflow", class.Spec.DefaultWorkflowRef.Name, &corev1alpha1.Workflow{}})
 	}
 	if class.Spec.DefaultPromptRef != nil {
 		targets = append(targets, refTarget{"PromptTemplate", class.Spec.DefaultPromptRef.Name, &corev1alpha1.PromptTemplate{}})
@@ -81,7 +77,6 @@ func (r *AgentClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.AgentClass{}).
 		Watches(&corev1alpha1.Model{}, enqueueByIndex(r.Client, classes, idxClassModel)).
-		Watches(&corev1alpha1.Workflow{}, enqueueByIndex(r.Client, classes, idxClassWorkflow)).
 		Watches(&corev1alpha1.PromptTemplate{}, enqueueByIndex(r.Client, classes, idxClassPrompt)).
 		Watches(&corev1alpha1.Policy{}, enqueueByIndex(r.Client, classes, idxClassPolicies)).
 		Named("agentclass").

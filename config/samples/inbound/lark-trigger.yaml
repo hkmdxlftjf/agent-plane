@@ -53,13 +53,10 @@ spec:
   # one. port is what makes the Operator create the Service; without it the
   # Trigger goes Degraded rather than pointing the adapter at nothing.
   runtime:
-    image: ghcr.io/hkmdxlftjf/agent-plane-runtime:latest
+    # Your image (BYO): any runtime that exposes POST /api/chat, which is what
+    # the adapter calls (docs/adapter-protocol.md). Agent Plane ships none.
+    image: myorg/my-runtime:v1
     port: 8080
-    env:
-      # The image defaults to --watch; this switches it to serve mode, which is
-      # what exposes POST /api/chat.
-      - name: AGENTPLANE_SERVE
-        value: "1"
 ---
 apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Trigger

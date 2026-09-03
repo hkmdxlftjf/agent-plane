@@ -156,6 +156,41 @@ func TestIndexedWatchFollowsAgentClassInheritance(t *testing.T) {
 	}
 }
 
+// ApplyClassDefaults fills unset toolRefs/skillRefs/toolPolicyRefs from the
+// AgentClass too, so a class-inherited Tool/Skill/ToolPolicy change must reach
+// the class's Agents the same way the Model route does.
+func TestIndexedWatchFollowsAgentClassInheritanceForLists(t *testing.T) {
+	cases := []struct {
+		name       string
+		direct     string
+		classField string
+		classSpec  *corev1alpha1.AgentClassSpec
+	}{
+		{"tools", idxAgentTools, idxClassTools, &corev1alpha1.AgentClassSpec{DefaultToolRefs: refs("shared-dep")}},
+		{"skills", idxAgentSkills, idxClassSkills, &corev1alpha1.AgentClassSpec{DefaultSkillRefs: refs("shared-dep")}},
+		{"toolPolicies", idxAgentToolPolicies, idxClassToolPolicies, &corev1alpha1.AgentClassSpec{DefaultToolPolicyRefs: refs("shared-dep")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			class := &corev1alpha1.AgentClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "std", Namespace: nsDefault},
+				Spec:       *tc.classSpec,
+			}
+			c := indexedClient(t, class,
+				agentNamed("inherits", func(a *corev1alpha1.Agent) { a.Spec.AgentClassRef = ref("std") }),
+				agentNamed("unrelated", func(a *corev1alpha1.Agent) {}),
+			)
+			r := &AgentReconciler{Client: c}
+			h := r.agentsReferencingIndexed([]string{tc.direct}, []string{tc.classField}, false)
+
+			got := collect(t, h, modelNamed("shared-dep")) // mapper only reads the object's ns/name
+			if len(got) != 1 || got[0] != "inherits" {
+				t.Errorf("enqueued %v, want [inherits] — class %s route is not indexed", got, tc.classField)
+			}
+		})
+	}
+}
+
 // A Tool reaches an Agent directly or through a ToolSet. Both routes must fire.
 func TestIndexedWatchFollowsToolSetExpansion(t *testing.T) {
 	c := indexedClient(t,
@@ -368,15 +403,12 @@ func TestEveryAgentDependencyKindIsIndexed(t *testing.T) {
 		spec  func(*corev1alpha1.Agent)
 	}{
 		{"model", idxAgentModel, func(a *corev1alpha1.Agent) { a.Spec.ModelRef = ref(dep) }},
-		{"workflow", idxAgentWorkflow, func(a *corev1alpha1.Agent) { a.Spec.WorkflowRef = ref(dep) }},
 		{"prompt", idxAgentPrompt, func(a *corev1alpha1.Agent) { a.Spec.PromptRef = ref(dep) }},
 		{"tools", idxAgentTools, func(a *corev1alpha1.Agent) { a.Spec.ToolRefs = refs(dep) }},
 		{"toolSets", idxAgentToolSets, func(a *corev1alpha1.Agent) { a.Spec.ToolSetRefs = refs(dep) }},
 		{"skills", idxAgentSkills, func(a *corev1alpha1.Agent) { a.Spec.SkillRefs = refs(dep) }},
-		{"memories", idxAgentMemories, func(a *corev1alpha1.Agent) { a.Spec.MemoryRefs = refs(dep) }},
 		{"policies", idxAgentPolicies, func(a *corev1alpha1.Agent) { a.Spec.PolicyRefs = refs(dep) }},
 		{"toolPolicies", idxAgentToolPolicies, func(a *corev1alpha1.Agent) { a.Spec.ToolPolicyRefs = refs(dep) }},
-		{"knowledgeBases", idxAgentKnowledge, func(a *corev1alpha1.Agent) { a.Spec.KnowledgeBaseRefs = refs(dep) }},
 		{"agentClass", idxAgentClass, func(a *corev1alpha1.Agent) { a.Spec.AgentClassRef = ref(dep) }},
 	}
 	for _, tc := range cases {

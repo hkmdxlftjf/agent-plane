@@ -32,7 +32,7 @@ type AgentSpec struct {
 	Description string `json:"description,omitempty"`
 
 	// agentClassRef optionally references an AgentClass providing shared
-	// defaults (base workflow, default policies) that this Agent inherits.
+	// defaults (default model, prompt, policies) that this Agent inherits.
 	// +optional
 	AgentClassRef *LocalReference `json:"agentClassRef,omitempty"`
 
@@ -41,12 +41,6 @@ type AgentSpec struct {
 	// effective model (neither here nor via its class) is marked Degraded.
 	// +optional
 	ModelRef *LocalReference `json:"modelRef,omitempty"`
-
-	// workflowRef references the Workflow describing the agent's execution
-	// shape (e.g. planner/tool/reflect/finish). Optional when inherited from an
-	// AgentClass or supplied by the runtime's default.
-	// +optional
-	WorkflowRef *LocalReference `json:"workflowRef,omitempty"`
 
 	// promptRef references the PromptTemplate providing system/role prompts.
 	// +optional
@@ -67,12 +61,7 @@ type AgentSpec struct {
 	// +listType=atomic
 	SkillRefs []LocalReference `json:"skillRefs,omitempty"`
 
-	// memoryRefs lists Memory backends available to the agent.
-	// +optional
-	// +listType=atomic
-	MemoryRefs []LocalReference `json:"memoryRefs,omitempty"`
-
-	// policyRefs lists Policies constraining the agent (model/memory/tool access).
+	// policyRefs lists Policies constraining the agent (model/tool access).
 	// +optional
 	// +listType=atomic
 	PolicyRefs []LocalReference `json:"policyRefs,omitempty"`
@@ -84,11 +73,6 @@ type AgentSpec struct {
 	// +optional
 	// +listType=atomic
 	ToolPolicyRefs []LocalReference `json:"toolPolicyRefs,omitempty"`
-
-	// knowledgeBaseRefs lists KnowledgeBases the agent may retrieve from (RAG).
-	// +optional
-	// +listType=atomic
-	KnowledgeBaseRefs []LocalReference `json:"knowledgeBaseRefs,omitempty"`
 
 	// credentialRefs lists Credentials the runtime needs for things Agent Plane
 	// does not model — an IM app secret, a home automation token, a vendor API
@@ -216,9 +200,6 @@ func ApplyClassDefaults(spec AgentSpec, class *AgentClass) AgentSpec {
 	}
 	if spec.ModelRef == nil && class.Spec.DefaultModelRef != nil {
 		spec.ModelRef = class.Spec.DefaultModelRef
-	}
-	if spec.WorkflowRef == nil && class.Spec.DefaultWorkflowRef != nil {
-		spec.WorkflowRef = class.Spec.DefaultWorkflowRef
 	}
 	if spec.PromptRef == nil && class.Spec.DefaultPromptRef != nil {
 		spec.PromptRef = class.Spec.DefaultPromptRef
@@ -464,7 +445,7 @@ type AgentStatus struct {
 	Phase AgentPhase `json:"phase,omitempty"`
 
 	// resolvedConfigHash is a stable hash of the fully resolved runtime
-	// configuration (model + workflow + tools + prompt + memory + policies).
+	// configuration (model + tools + prompt + policies).
 	// Runtimes and the Registry use it to detect when config must be refreshed.
 	// +optional
 	ResolvedConfigHash string `json:"resolvedConfigHash,omitempty"`

@@ -35,9 +35,8 @@ type ToolSetReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=toolsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=toolsets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=toolsets/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=toolsets/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=tools,verbs=get;list;watch
 
 // Reconcile resolves the ToolSet's member Tools and publishes readiness.

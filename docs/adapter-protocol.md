@@ -149,10 +149,8 @@ metadata: {name: support-agent}
 spec:
   modelRef: {name: llm-model}
   runtime:
-    image: ghcr.io/hkmdxlftjf/agent-plane-runtime:latest
+    image: myorg/my-runtime:v1       # your image; must expose POST /api/chat
     port: 8080                 # REQUIRED: this is what creates the Service
-    env:
-      - {name: AGENTPLANE_SERVE, value: "1"}    # serve mode exposes /api/chat
 ---
 apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Trigger

@@ -3,7 +3,7 @@
 Agent Plane is a **control plane** for AI Agents, built with the Kubernetes Operator
 pattern. It manages the _declaration, lifecycle, and configuration_ of Agents
 and the resources they are composed from — Models, Tools, Skills, MCP servers,
-Workflows, Prompts, Memory, Policies, and more — as first-class Custom
+Prompts, Policies, and more — as first-class Custom
 Resources.
 
 > Agent Plane is **not** an Agent runtime. It does not do inference, planning, ReAct,
@@ -28,9 +28,9 @@ Resources.
     watches only Agents; the Operator folds dependency changes into the Agent's
     `resolvedConfigHash`, so an Agent event covers any change that matters.
 - **Admission webhooks** (`internal/webhook/v1alpha1/`) validate _structural_
-  invariants at apply time (fail fast) for Agent (no duplicate refs), Workflow
-  (unique step names, no dangling `next`), and Tool (an `mcp` tool needs an
-  `mcpServerRef`). The same checks live in `api/v1alpha1/validation.go` and are
+  invariants at apply time (fail fast) for Agent (no duplicate refs) and Tool
+  (an `mcp` tool needs an `mcpServerRef`). The same checks live in
+  `api/v1alpha1/validation.go` and are
   reused by the controllers — cross-object _existence_ is deliberately left to
   the controllers' eventual consistency so GitOps can apply in any order.
 
@@ -45,11 +45,8 @@ Resources.
 | **ToolSet**        | A named bundle of Tools.                                                                                                                                  |
 | **Skill**          | A markdown instruction pack (SKILL.md-style) that teaches the agent _how_ to do something; its `allowedTools` confine the agent once the skill is loaded. |
 | **MCPServer**      | An MCP server; the Operator materializes it into a Deployment + Service.                                                                                  |
-| **Workflow**       | Engine-neutral execution shape (planner/tool/reflect/finish).                                                                                             |
 | **PromptTemplate** | Versioned system/role prompts and few-shot examples.                                                                                                      |
-| **Memory**         | A memory/storage backend (redis/postgres/vector/graph/s3).                                                                                                |
-| **KnowledgeBase**  | A retrieval corpus (RAG).                                                                                                                                 |
-| **Policy**         | Coarse allow/deny over models/memory/mcp/tools/workflows. Enforced: the Operator refuses to run an Agent whose refs are denied.                           |
+| **Policy**         | Coarse allow/deny over models/mcp/tools. Enforced: the Operator refuses to run an Agent whose refs are denied.                                             |
 | **ToolPolicy**     | Per-Tool authorization and per-session call caps. Enforced by the runtime at call time.                                                                   |
 | **Credential**     | Indirects secret material through a Kubernetes Secret.                                                                                                    |
 | **Trigger**        | An _inbound_ event source (IM bot, webhook) feeding an Agent, run as an owned adapter Deployment.                                                         |
@@ -77,9 +74,9 @@ itself to peers (`spec.expose`) — see _Coding agents_ below.
   `Deployment` + `Service` for each MCPServer via `CreateOrUpdate` +
   `SetControllerReference`, and reflects availability into status.
 
-The remaining 12 controllers follow the same two shapes: **reference-resolving**
-(Model, Memory, Tool, ToolSet, Skill, KnowledgeBase, AgentClass, Credential) validate
-and resolve what they point at, and **validation-only** (Workflow, ToolPolicy,
+The remaining 9 controllers follow the same two shapes: **reference-resolving**
+(Model, Tool, ToolSet, Skill, AgentClass, Credential) validate
+and resolve what they point at, and **validation-only** (ToolPolicy,
 Policy, PromptTemplate) check internal consistency. Each watches the kinds it
 depends on, so the reference graph converges automatically — a resource stuck
 `Degraded` on a missing dependency flips to `Ready` as soon as that dependency
@@ -135,45 +132,6 @@ curl -N localhost:9090/v1/agents/default/support-agent/watch
 > In-cluster they require cert-manager (uncomment the `webhook`/`cert-manager`
 > entries in `config/default/kustomization.yaml`).
 
-## Reference runtime: a real agent driven by Agent Plane
-
-`cmd/agent-runtime` is a minimal _real_ agent that stands in for a full Agent
-framework, built on the Go SDK
-([`github.com/hkmdxlftjf/agent-plane-sdk-go`](https://github.com/hkmdxlftjf/agent-plane-sdk-go)).
-Point it at a deployed Agent and it:
-
-1. pulls the resolved config from the **Registry** (never the API server),
-2. reads the model API key from the referenced **Secret** via its own RBAC,
-3. takes the Registry-resolved **PromptTemplate** system prompt and advertises any
-   **Skill** as a name + description catalog — full instruction bodies load on demand
-   via a built-in `load_skill` tool, so the prompt stays flat however many skills an
-   Agent mounts — restores conversation **Memory**, and retrieves from
-   **KnowledgeBases**, and
-4. runs a **tool-calling loop**: the model requests a tool, the runtime invokes
-   it over **MCP JSON-RPC** (or plain HTTP), feeds the result back, and returns
-   the answer — refusing any call its **Policy**/**ToolPolicy** forbids, and
-   handing the reason to the model rather than failing the run.
-
-```sh
-# operator + in-cluster Registry deployed first; needs an LLM key in the Model's Secret.
-go run ./cmd/agent-runtime --namespace <ns> --name <agent> --prompt "What is the status of order A-42?"
-```
-
-Sample output:
-
-```
-[step 1] model calls tool order-lookup({"orderId":"A-42"})
-         ↳ result: {"carrier":"UPS","eta":"2026-07-20","status":"shipped",...}
-✅ Final answer:
-Order A-42 is shipped via UPS with an ETA of July 20, 2026.
-```
-
-`agent-runtime` and `example-mcp` are **test fixtures**, not part of the control
-plane — they stand in for a real Agent framework and a real MCP tool server to
-prove the platform drives them end-to-end. See
-**[docs/quickstart-custom-agent.md](docs/quickstart-custom-agent.md)** for a full
-walkthrough of declaring, implementing, and deploying your own agent.
-
 ## Operator-managed runtime (`spec.runtime`)
 
 By default Agent Plane is purely declarative: you bring your own runtime and point it
@@ -193,8 +151,7 @@ spec:
 
 The Operator injects `AGENTPLANE_REGISTRY`, `AGENTPLANE_AGENT_NAMESPACE`, and
 `AGENTPLANE_AGENT_NAME`; the runtime container pulls its config from the in-cluster
-Registry and hot-reloads on change. The reference image (`Dockerfile.agent-runtime`,
-`cmd/agent-runtime --watch`) does exactly this. In-cluster Registry manifests are
+Registry and hot-reloads on change. In-cluster Registry manifests are
 in `config/registry/`. See **[docs/usage.md](docs/usage.md)** §8 and
 **[docs/runtime-protocol.md](docs/runtime-protocol.md)** for the full contract.
 
@@ -265,8 +222,6 @@ in. See **[docs/adapter-protocol.md](docs/adapter-protocol.md)** and
 
 ## Documentation
 
-- **[docs/quickstart-custom-agent.md](docs/quickstart-custom-agent.md)** — zero-to-running
-  guide: declare a custom agent, implement its runtime code, and deploy it.
 - **[docs/usage.md](docs/usage.md)** — full usage guide (deploy, declarative &
   programmatic usage, data plane, runtime, FAQ).
 - **[docs/runtime-protocol.md](docs/runtime-protocol.md)** — the runtime

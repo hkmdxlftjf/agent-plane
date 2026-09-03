@@ -21,7 +21,6 @@ const (
 	kindCredential = "Credential"
 	kindTool       = "Tool"
 	kindModel      = "Model"
-	kindMemory     = "Memory"
 )
 
 // Well-known string literals shared across controllers and tests.

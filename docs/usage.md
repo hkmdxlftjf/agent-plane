@@ -2,7 +2,7 @@
 
 Agent Plane is a **Kubernetes-native control plane for AI Agents**. It uses the
 Operator pattern to declaratively manage Agents and everything they are composed
-from (Model / Tool / Skill / MCPServer / Workflow / Prompt / Memory / Policy …),
+from (Model / Tool / Skill / MCPServer / Prompt / Policy …),
 and serves the resolved configuration to runtimes through the **Registry**.
 
 > **Positioning.** Agent Plane is **not** an Agent runtime. It does not do inference,
@@ -16,7 +16,7 @@ and serves the resolved configuration to runtimes through the **Registry**.
 ## Table of contents
 
 1. [Architecture](#1-architecture)
-2. [Resource model (15 CRDs)](#2-resource-model-15-crds)
+2. [Resource model (12 CRDs)](#2-resource-model-12-crds)
 3. [Prerequisites & deploy](#3-prerequisites--deploy)
 4. [Declarative usage: define an Agent in YAML](#4-declarative-usage-define-an-agent-in-yaml)
 5. [Programmatic usage: create an Agent in Go](#5-programmatic-usage-create-an-agent-in-go)
@@ -71,13 +71,13 @@ and wire the watch to it — a watch with no matching index silently stops
 re-reconciling, which looks like a resource that just never converges.
 
 Two routes reach a resource without it naming the dependency directly, and both
-are handled: an Agent inheriting `modelRef`/`workflowRef`/`promptRef`/`policyRefs`
+are handled: an Agent inheriting `modelRef`/`promptRef`/`policyRefs`
 from its AgentClass, and a Tool reaching an Agent through a ToolSet. Add a third
 such route and the mapper needs to know about it.
 
 ---
 
-## 2. Resource model (15 CRDs)
+## 2. Resource model (12 CRDs)
 
 API group `core.hkmdxlftjf.io/v1alpha1`, all Namespaced.
 
@@ -90,11 +90,8 @@ API group `core.hkmdxlftjf.io/v1alpha1`, all Namespaced.
 | **ToolSet** | ss | A named bundle of Tools. |
 | **Skill** | — | A markdown instruction pack (SKILL.md-style); teaches the agent *how*; its `allowedTools` confine tool calls once loaded (see §12). |
 | **MCPServer** | mcp | An MCP server; Operator materializes it into a Deployment+Service. |
-| **Workflow** | wf | Engine-neutral execution shape (planner/tool/reflect/finish). |
 | **PromptTemplate** | pt | Versioned system/role prompts + few-shot. |
-| **Memory** | — | Memory/storage backend (redis/postgres/vector/graph/s3). |
-| **KnowledgeBase** | kb | Retrieval corpus (RAG). |
-| **Policy** | — | Coarse allow/deny over models/memory/mcp/tools/workflows; enforced (see §12). |
+| **Policy** | — | Coarse allow/deny over models/mcp/tools; enforced (see §12). |
 | **ToolPolicy** | tp | Per-Tool allow/deny and per-session call caps; enforced (see §12). |
 | **Credential** | cred | Indirects secret material through a K8s Secret (never inline). |
 | **Trigger** | trg | An inbound event source (IM bot, webhook) feeding an Agent; runs a BYO adapter image (see §13). |
@@ -155,7 +152,7 @@ kind: Agent
 metadata: {name: my-agent}
 spec:
   modelRef: {name: my-model}
-  # optional: promptRef / toolRefs / toolSetRefs / skillRefs / memoryRefs / policyRefs / agentClassRef / runtime
+  # optional: promptRef / toolRefs / toolSetRefs / skillRefs / policyRefs / agentClassRef / runtime
 ```
 
 ```sh
@@ -223,21 +220,13 @@ via its own RBAC. Full contract: `docs/runtime-protocol.md`.
 
 ## 7. Running a real agent (Tool/MCP calls)
 
-`cmd/agent-runtime` is a minimal but real runtime (stands in for LangGraph et al.):
-it pulls config from the Registry, reads the model key from the referenced Secret
-via RBAC (the system prompt arrives already resolved in the config), then runs a
-**tool-calling loop** — `http` tools via POST, `mcp` tools via JSON-RPC
-`tools/call` — feeding results back until a final answer. It is built entirely on
-the Go SDK, [`github.com/hkmdxlftjf/agent-plane-sdk-go`](https://github.com/hkmdxlftjf/agent-plane-sdk-go);
-the reusable loop is the SDK's `agentloop` package.
-
-```sh
-make run-registry &
-kubectl -n default port-forward svc/orders-mcp 18080:8080 &   # host → in-cluster MCP
-go run ./cmd/agent-runtime --namespace default --name my-agent \
-  --tool-endpoint order-lookup=http://localhost:18080 \
-  --prompt "What is the status of order A-42?"
-```
+Any runtime that implements `docs/runtime-protocol.md` runs here: it pulls
+config from the Registry, resolves `http` tools via POST and `mcp` tools via
+JSON-RPC `tools/call`, feeds results back until a final answer, and refuses
+calls its Policy/ToolPolicy forbids. The reusable Go loop lives in the SDK
+([`agent-plane-sdk-go`](https://github.com/hkmdxlftjf/agent-plane-sdk-go));
+for a runnable agent today see §14 (coding agent) — the in-repo reference
+runtime was removed in favor of the pi direction.
 
 ---
 
@@ -289,7 +278,7 @@ The Operator injects into each runtime pod:
 | `AGENTPLANE_CREDENTIALS_PATH` | when `spec.credentialRefs` is set — see _Credentials_ below |
 
 The runtime container then pulls its config from the Registry and hot-reloads on
-change (pull model — see the reference `--watch` mode below). The Deployment is
+change (pull model — see docs/runtime-protocol.md §6). The Deployment is
 owned by the Agent, so deleting the Agent garbage-collects the runtime.
 `status.runtimeAvailableReplicas` reflects availability.
 
@@ -371,15 +360,6 @@ collide.
 A missing Credential leaves the Agent `Degraded` with `ReferenceNotFound` and
 converges when it appears, like any other reference.
 
-**Reference runtime image.** `cmd/agent-runtime` has a long-running `--watch`
-mode (the container default) that subscribes to the Registry, reads the Secret
-via its ServiceAccount RBAC, and hot-reloads:
-
-```sh
-docker build -f Dockerfile.agent-runtime -t agent-plane-runtime:dev .   # image defaults to --watch
-# then reference it: spec.runtime.image: agent-plane-runtime:dev
-```
-
 > The runtime pod needs RBAC to `get` Secrets in its namespace (for the model
 > key). Grant its ServiceAccount a `Role`/`RoleBinding` accordingly; Agent Plane does
 > not provision that for you.
@@ -391,39 +371,21 @@ docker build -f Dockerfile.agent-runtime -t agent-plane-runtime:dev .   # image 
 
 ---
 
-## 9. Running the reference runtime
+## 9. Running an agent runtime
 
-`cmd/agent-runtime` is a minimal real agent that pulls config from the Registry,
-reads the model key from the Secret, exposes Skills as a load-on-demand catalog,
-folds in Memory / KnowledgeBase context, and runs a tool-calling loop. Point it at
-a deployed Agent:
-
-```sh
-export KUBECONFIG=$HOME/.kube/config
-# with an in-cluster Registry, port-forward it (or run `go run ./cmd/registry`):
-kubectl -n agent-plane-system port-forward svc/agent-plane-registry 9090:9090 &
-
-# one-shot:
-go run ./cmd/agent-runtime --registry http://localhost:9090 \
-  --namespace <ns> --name <agent> --prompt "What is the status of order A-42?"
-# interactive REPL:      add --chat
-# browser chat UI + API: add --serve   (or set AGENTPLANE_SERVE=1)
-# long-running hot-reload (the deployed default): add --watch
-```
-
-See **[quickstart-custom-agent.md](quickstart-custom-agent.md)** for the full
-declare → implement → deploy walkthrough.
+The in-repo reference runtime was removed (pi is the only runtime direction;
+see §14 for the coding-agent path that runs today). For the contract a new
+runtime implements, see **[runtime-protocol.md](runtime-protocol.md)**.
 
 ---
 
 ## 10. Verification & testing
 
 ```sh
-# ① Code: envtest (real apiserver+etcd) — controller/webhook unit tests + agentmemory
+# ① Code: envtest (real apiserver+etcd) — controller/webhook unit tests
 make test
 
-# ② Real agent: real model + real tool call (see §9)
-go run ./cmd/agent-runtime --namespace <ns> --name <agent> --prompt "..."
+# ② Real agent: see §14 (coding agent) — the reference runtime was removed
 ```
 
 ---
@@ -464,7 +426,7 @@ can do the whole job alone.
 a Policy it references, `AgentReconciler` marks it `Degraded` with reason
 `PolicyViolation` and clears `resolvedConfigHash` — so no runtime ever fetches a
 config for it. Everything the Agent *declares* is checked: `modelRef`,
-`workflowRef`, `memoryRefs`, `toolRefs`, the tools contributed by every
+`toolRefs`, the tools contributed by every
 `toolSetRefs` member, and the MCPServer behind each tool (so a ToolSet is not a
 way to smuggle a denied tool past policy). The result is reported on its own
 condition, separate from `Resolved`:
@@ -798,12 +760,11 @@ the value is read by the runtime via its own RBAC.
 ## 16. Repo layout
 
 ```
-api/v1alpha1/           # 14 CRD types + shared types + structural validation (validation.go)
+api/v1alpha1/           # 12 CRD types + shared types + structural validation (validation.go)
 internal/controller/    # one reconciler per Kind; refutil.go = shared ref-resolution/watch helpers
-internal/webhook/       # validating admission webhooks (Agent/Workflow/Tool)
+internal/webhook/       # validating admission webhooks (Agent/Tool)
 cmd/main.go             # Operator (manager)
 cmd/registry/           # Registry (data-plane config endpoint: /config, /watch; wire types from the SDK)
-cmd/agent-runtime/      # reference runtime built on the Go SDK (one-shot + --chat + --serve + --watch)
 cmd/example-mcp/        # minimal MCP server (test fixture)
 config/crd|rbac|manager # kustomize bases
 config/default          # full deploy (webhook/cert-manager)
@@ -812,6 +773,6 @@ config/registry         # in-cluster Registry (Deployment+Service+RBAC)
 config/samples          # coherent sample resources
 ```
 
-> `cmd/agent-runtime`, `cmd/example-mcp` are **verification fixtures**, not part
-> of the control plane — they stand in for real Agent frameworks and MCP tool
-> servers to prove the platform drives them end to end.
+> `cmd/example-mcp`, `cmd/script-mcp` are **verification fixtures**, not part
+> of the control plane — they stand in for real MCP tool servers to prove the
+> platform drives them end to end.

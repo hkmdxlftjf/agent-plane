@@ -39,11 +39,9 @@ type EffectivePolicy struct {
 	// resolution order, so a denial can point at the object to edit.
 	Sources []string
 
-	Models    *AccessRule
-	Memory    *AccessRule
-	MCP       *AccessRule
-	Tools     *AccessRule
-	Workflows *AccessRule
+	Models *AccessRule
+	MCP    *AccessRule
+	Tools  *AccessRule
 
 	// ToolRules are the concatenated rules of every referenced ToolPolicy, in
 	// order. The first rule matching a tool name applies, except that an exact
@@ -66,10 +64,8 @@ func MergePolicies(policies []Policy, toolPolicies []ToolPolicy) *EffectivePolic
 		p := &policies[i]
 		eff.Sources = append(eff.Sources, "Policy/"+p.Name)
 		eff.Models = mergeAccessRule(eff.Models, p.Spec.Models)
-		eff.Memory = mergeAccessRule(eff.Memory, p.Spec.Memory)
 		eff.MCP = mergeAccessRule(eff.MCP, p.Spec.MCP)
 		eff.Tools = mergeAccessRule(eff.Tools, p.Spec.Tools)
-		eff.Workflows = mergeAccessRule(eff.Workflows, p.Spec.Workflows)
 	}
 	for i := range toolPolicies {
 		tp := &toolPolicies[i]
@@ -87,7 +83,9 @@ func MergePolicies(policies []Policy, toolPolicies []ToolPolicy) *EffectivePolic
 // mergeAccessRule intersects allow lists and unions deny lists. An empty allow
 // list means "unconstrained", so intersecting with it yields the other side
 // rather than the empty set — otherwise a Policy that only denies would
-// accidentally forbid everything.
+// accidentally forbid everything. Two non-empty allow lists with an empty
+// intersection are the opposite case: nothing is permitted anymore, encoded as
+// a deny-all so an empty Allow cannot read as "unconstrained".
 func mergeAccessRule(into, add *AccessRule) *AccessRule {
 	if add == nil {
 		return into
@@ -99,6 +97,10 @@ func mergeAccessRule(into, add *AccessRule) *AccessRule {
 	out := &AccessRule{
 		Allow: intersectOrKeep(into.Allow, add.Allow),
 		Deny:  union(into.Deny, add.Deny),
+	}
+	if len(into.Allow) > 0 && len(add.Allow) > 0 && len(out.Allow) == 0 {
+		out.Allow = nil
+		out.Deny = union(out.Deny, []string{"*"})
 	}
 	return out
 }
@@ -112,21 +114,34 @@ func intersectOrKeep(a, b []string) []string {
 	case len(b) == 0:
 		return a
 	}
+	// A wildcard on either side does not narrow the other — symmetrically:
+	// "everything" narrowed by "only b" is "only b", and vice versa.
+	if containsWildcard(a) {
+		return b
+	}
+	if containsWildcard(b) {
+		return a
+	}
 	inB := make(map[string]bool, len(b))
 	for _, v := range b {
 		inB[v] = true
 	}
-	// A wildcard on either side does not narrow the other.
-	if inB["*"] {
-		return a
-	}
 	out := make([]string, 0, len(a))
 	for _, v := range a {
-		if v == "*" || inB[v] {
+		if inB[v] {
 			out = append(out, v)
 		}
 	}
 	return out
+}
+
+func containsWildcard(list []string) bool {
+	for _, v := range list {
+		if v == "*" {
+			return true
+		}
+	}
+	return false
 }
 
 func union(a, b []string) []string {
@@ -146,8 +161,6 @@ func union(a, b []string) []string {
 // tool reached indirectly is policed the same as a directly referenced one).
 type AgentReferences struct {
 	Model      string
-	Workflow   string
-	Memories   []string
 	Tools      []string
 	MCPServers []string
 }
@@ -175,16 +188,6 @@ func (e *EffectivePolicy) Violations(refs AgentReferences) []string {
 	if e.Models != nil && refs.Model != "" {
 		if !e.Models.Permits(refs.Model) {
 			out = append(out, fmt.Sprintf("model %q is denied by policy", refs.Model))
-		}
-	}
-	if e.Workflows != nil && refs.Workflow != "" {
-		if !e.Workflows.Permits(refs.Workflow) {
-			out = append(out, fmt.Sprintf("workflow %q is denied by policy", refs.Workflow))
-		}
-	}
-	for _, name := range refs.Memories {
-		if e.Memory != nil && !e.Memory.Permits(name) {
-			out = append(out, fmt.Sprintf("memory %q is denied by policy", name))
 		}
 	}
 	for _, name := range refs.MCPServers {

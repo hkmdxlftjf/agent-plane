@@ -23,7 +23,7 @@ package v1alpha1
 
 // LocalReference points at another Agent Plane resource by name, in the same
 // namespace as the referring object. This is the primary composition primitive:
-// an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+// an Agent references a Model, Tools, a Prompt, etc. via LocalReference.
 type LocalReference struct {
 	// name is the metadata.name of the referenced resource.
 	// +kubebuilder:validation:MinLength=1
@@ -67,7 +67,7 @@ const (
 	// has been successfully reconciled and is usable by the Registry/runtimes.
 	ConditionReady = "Ready"
 	// ConditionResolved indicates that all references declared by a resource
-	// (e.g. an Agent's Model/Tool/Workflow refs) resolved to existing objects.
+	// (e.g. an Agent's Model/Tool refs) resolved to existing objects.
 	ConditionResolved = "Resolved"
 	// ConditionPolicyCompliant indicates that the references a resource declares
 	// are permitted by the Policies it is subject to. It is reported separately

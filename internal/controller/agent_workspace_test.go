@@ -37,6 +37,9 @@ import (
 // testRepoURL is the stand-in repository every workspace fixture clones from.
 const testRepoURL = "https://github.com/org/api"
 
+// secretKeyToken is the Secret key every test Credential points at.
+const secretKeyToken = "token"
+
 // repoAgent builds an Agent bound to a repository, which is the shape a coding
 // agent (Claude Code, Codex, OpenCode) runs in: one pod, one working tree.
 func repoAgent(name, repo string, mutate func(*corev1alpha1.Agent)) *corev1alpha1.Agent {
@@ -196,7 +199,7 @@ var _ = Describe("Agent workspace", func() {
 			cred := &corev1alpha1.Credential{
 				ObjectMeta: metav1.ObjectMeta{Name: credName, Namespace: nsDefault},
 				Spec: corev1alpha1.CredentialSpec{
-					SecretRef: corev1alpha1.SecretKeyReference{Name: secretName, Key: "token"},
+					SecretRef: corev1alpha1.SecretKeyReference{Name: secretName, Key: secretKeyToken},
 				},
 			}
 			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, cred))).To(Succeed())
@@ -293,11 +296,29 @@ var _ = Describe("Agent workspace", func() {
 			deleteIfExists(ctx, types.NamespacedName{Name: agentName + "-workspace", Namespace: nsDefault}, &corev1.PersistentVolumeClaim{})
 		})
 
-		It("fails the reconcile", func() {
+		It("goes Degraded and skips the runtime, rather than failing the reconcile", func() {
+			// The workspace git credential follows the house rule for every
+			// other reference: report it in status, materialize nothing, and
+			// converge when the Credential shows up. An error requeue here
+			// would leave a previously-Ready Agent's status stale and — with
+			// no watch on the credential — wait out the full backoff.
 			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring(testMissingName))
+			Expect(err).NotTo(HaveOccurred())
+
+			agent := &corev1alpha1.Agent{}
+			Expect(k8sClient.Get(ctx, agentKey, agent)).To(Succeed())
+			Expect(agent.Status.Phase).To(Equal(corev1alpha1.AgentPhaseDegraded))
+			cond := meta.FindStatusCondition(agent.Status.Conditions, corev1alpha1.ConditionReady)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Reason).To(Equal(corev1alpha1.ReasonReferenceMissing))
+			Expect(cond.Message).To(ContainSubstring(testMissingName))
+
+			// No runtime pod: the clone step cannot authenticate until the
+			// Credential exists, so a Deployment would only crash-loop.
+			dep := &appsv1.Deployment{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: agentName + "-runtime", Namespace: nsDefault}, dep)
+			Expect(apierrors.IsNotFound(err)).To(BeTrue(), "no runtime Deployment may exist while the credential is missing")
 		})
 	})
 
@@ -845,7 +866,7 @@ var _ = Describe("Agent workspace", func() {
 			return &corev1alpha1.Credential{
 				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsDefault},
 				Spec: corev1alpha1.CredentialSpec{
-					SecretRef: corev1alpha1.SecretKeyReference{Name: secret, Key: "token"},
+					SecretRef: corev1alpha1.SecretKeyReference{Name: secret, Key: secretKeyToken},
 				},
 			}
 		}
@@ -1398,6 +1419,61 @@ var _ = Describe("Agent peering", func() {
 			cond := meta.FindStatusCondition(caller.Status.Conditions, corev1alpha1.ConditionReady)
 			Expect(cond.Reason).To(Equal(corev1alpha1.ReasonPolicyViolation))
 			Expect(cond.Message).To(ContainSubstring(toolName))
+		})
+	})
+})
+
+var _ = Describe("Agent workspace dual credential", func() {
+
+	// The same Credential may back both a credentialRefs entry and the workspace
+	// credentialRef. Both resolve, but the pod must carry each volume exactly once
+	// — duplicate volume names would make the API server reject the Deployment.
+	Context("When the workspace credential is also declared in credentialRefs", func() {
+		const agentName = "test-ws-dualcred-agent"
+		const credName = "dual-cred"
+		const dualSecretName = "dual-secret"
+		agentKey := types.NamespacedName{Name: agentName, Namespace: nsDefault}
+
+		BeforeEach(func() {
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: dualSecretName, Namespace: nsDefault},
+				StringData: map[string]string{"token": "t"},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, secret))).To(Succeed())
+			cred := &corev1alpha1.Credential{
+				ObjectMeta: metav1.ObjectMeta{Name: credName, Namespace: nsDefault},
+				Spec:       corev1alpha1.CredentialSpec{SecretRef: corev1alpha1.SecretKeyReference{Name: dualSecretName, Key: secretKeyToken}},
+			}
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, cred))).To(Succeed())
+			agent := repoAgent(agentName, "https://github.com/org/x", func(a *corev1alpha1.Agent) {
+				a.Spec.Workspace.CredentialRef = &corev1alpha1.LocalReference{Name: credName}
+				a.Spec.CredentialRefs = []corev1alpha1.LocalReference{{Name: credName}}
+			})
+			Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, agent))).To(Succeed())
+		})
+
+		AfterEach(func() {
+			deleteIfExists(ctx, agentKey, &corev1alpha1.Agent{})
+			deleteIfExists(ctx, types.NamespacedName{Name: agentName + "-runtime", Namespace: nsDefault}, &appsv1.Deployment{})
+			deleteIfExists(ctx, types.NamespacedName{Name: agentName + "-workspace", Namespace: nsDefault}, &corev1.PersistentVolumeClaim{})
+			deleteIfExists(ctx, types.NamespacedName{Name: credName, Namespace: nsDefault}, &corev1alpha1.Credential{})
+			deleteIfExists(ctx, types.NamespacedName{Name: dualSecretName, Namespace: nsDefault}, &corev1.Secret{})
+		})
+
+		It("mounts the credential once, at both of its paths", func() {
+			reconciler := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: agentKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: agentName + "-runtime", Namespace: nsDefault}, dep)).To(Succeed())
+			names := map[string]int{}
+			for _, v := range dep.Spec.Template.Spec.Volumes {
+				names[v.Name]++
+			}
+			volName := "credential-" + credName
+			Expect(names[volName]).To(Equal(1), "credential volume must appear exactly once, got %v", names)
+			Expect(names["git-credential"]).To(Equal(1))
 		})
 	})
 })

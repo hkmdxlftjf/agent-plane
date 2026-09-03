@@ -58,7 +58,7 @@ spec:
               agentClassRef:
                 description: |-
                   agentClassRef optionally references an AgentClass providing shared
-                  defaults (base workflow, default policies) that this Agent inherits.
+                  defaults (default model, prompt, policies) that this Agent inherits.
                 properties:
                   name:
                     description: name is the metadata.name of the referenced resource.
@@ -93,7 +93,7 @@ spec:
                   description: |-
                     LocalReference points at another Agent Plane resource by name, in the same
                     namespace as the referring object. This is the primary composition primitive:
-                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                    an Agent references a Model, Tools, a Prompt, etc. via LocalReference.
                   properties:
                     name:
                       description: name is the metadata.name of the referenced resource.
@@ -132,41 +132,6 @@ spec:
                     minimum: 1
                     type: integer
                 type: object
-              knowledgeBaseRefs:
-                description: knowledgeBaseRefs lists KnowledgeBases the agent may
-                  retrieve from (RAG).
-                items:
-                  description: |-
-                    LocalReference points at another Agent Plane resource by name, in the same
-                    namespace as the referring object. This is the primary composition primitive:
-                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
-                  properties:
-                    name:
-                      description: name is the metadata.name of the referenced resource.
-                      minLength: 1
-                      type: string
-                  required:
-                  - name
-                  type: object
-                type: array
-                x-kubernetes-list-type: atomic
-              memoryRefs:
-                description: memoryRefs lists Memory backends available to the agent.
-                items:
-                  description: |-
-                    LocalReference points at another Agent Plane resource by name, in the same
-                    namespace as the referring object. This is the primary composition primitive:
-                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
-                  properties:
-                    name:
-                      description: name is the metadata.name of the referenced resource.
-                      minLength: 1
-                      type: string
-                  required:
-                  - name
-                  type: object
-                type: array
-                x-kubernetes-list-type: atomic
               modelRef:
                 description: |-
                   modelRef references the Model this agent uses. Optional at the API level so
@@ -181,13 +146,13 @@ spec:
                 - name
                 type: object
               policyRefs:
-                description: policyRefs lists Policies constraining the agent (model/memory/tool
+                description: policyRefs lists Policies constraining the agent (model/tool
                   access).
                 items:
                   description: |-
                     LocalReference points at another Agent Plane resource by name, in the same
                     namespace as the referring object. This is the primary composition primitive:
-                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                    an Agent references a Model, Tools, a Prompt, etc. via LocalReference.
                   properties:
                     name:
                       description: name is the metadata.name of the referenced resource.
@@ -806,7 +771,7 @@ spec:
                   description: |-
                     LocalReference points at another Agent Plane resource by name, in the same
                     namespace as the referring object. This is the primary composition primitive:
-                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                    an Agent references a Model, Tools, a Prompt, etc. via LocalReference.
                   properties:
                     name:
                       description: name is the metadata.name of the referenced resource.
@@ -827,7 +792,7 @@ spec:
                   description: |-
                     LocalReference points at another Agent Plane resource by name, in the same
                     namespace as the referring object. This is the primary composition primitive:
-                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                    an Agent references a Model, Tools, a Prompt, etc. via LocalReference.
                   properties:
                     name:
                       description: name is the metadata.name of the referenced resource.
@@ -844,7 +809,7 @@ spec:
                   description: |-
                     LocalReference points at another Agent Plane resource by name, in the same
                     namespace as the referring object. This is the primary composition primitive:
-                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                    an Agent references a Model, Tools, a Prompt, etc. via LocalReference.
                   properties:
                     name:
                       description: name is the metadata.name of the referenced resource.
@@ -862,7 +827,7 @@ spec:
                   description: |-
                     LocalReference points at another Agent Plane resource by name, in the same
                     namespace as the referring object. This is the primary composition primitive:
-                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                    an Agent references a Model, Tools, a Prompt, etc. via LocalReference.
                   properties:
                     name:
                       description: name is the metadata.name of the referenced resource.
@@ -873,19 +838,6 @@ spec:
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
-              workflowRef:
-                description: |-
-                  workflowRef references the Workflow describing the agent's execution
-                  shape (e.g. planner/tool/reflect/finish). Optional when inherited from an
-                  AgentClass or supplied by the runtime's default.
-                properties:
-                  name:
-                    description: name is the metadata.name of the referenced resource.
-                    minLength: 1
-                    type: string
-                required:
-                - name
-                type: object
               workspace:
                 description: |-
                   workspace gives this Agent a persistent working directory: a volume the
@@ -1032,7 +984,7 @@ spec:
               resolvedConfigHash:
                 description: |-
                   resolvedConfigHash is a stable hash of the fully resolved runtime
-                  configuration (model + workflow + tools + prompt + memory + policies).
+                  configuration (model + tools + prompt + policies).
                   Runtimes and the Registry use it to detect when config must be refreshed.
                 type: string
               resolvedRefs:

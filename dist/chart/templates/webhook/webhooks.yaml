@@ -51,24 +51,4 @@ webhooks:
           - v1alpha1
         resources:
           - tools
-  - name: vworkflow-v1alpha1.kb.io
-    clientConfig:
-      service:
-        name: agent-plane-webhook-service
-        namespace: {{ .Release.Namespace }}
-        path: /validate-core-hkmdxlftjf-io-v1alpha1-workflow
-    failurePolicy: Fail
-    sideEffects: None
-    admissionReviewVersions:
-      - v1
-    rules:
-      - operations:
-          - CREATE
-          - UPDATE
-        apiGroups:
-          - core.hkmdxlftjf.io
-        apiVersions:
-          - v1alpha1
-        resources:
-          - workflows
 {{- end }}

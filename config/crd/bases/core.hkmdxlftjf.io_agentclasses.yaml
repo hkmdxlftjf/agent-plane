@@ -63,7 +63,7 @@ spec:
                   description: |-
                     LocalReference points at another Agent Plane resource by name, in the same
                     namespace as the referring object. This is the primary composition primitive:
-                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                    an Agent references a Model, Tools, a Prompt, etc. via LocalReference.
                   properties:
                     name:
                       description: name is the metadata.name of the referenced resource.
@@ -93,7 +93,7 @@ spec:
                   description: |-
                     LocalReference points at another Agent Plane resource by name, in the same
                     namespace as the referring object. This is the primary composition primitive:
-                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                    an Agent references a Model, Tools, a Prompt, etc. via LocalReference.
                   properties:
                     name:
                       description: name is the metadata.name of the referenced resource.
@@ -112,7 +112,7 @@ spec:
                   description: |-
                     LocalReference points at another Agent Plane resource by name, in the same
                     namespace as the referring object. This is the primary composition primitive:
-                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                    an Agent references a Model, Tools, a Prompt, etc. via LocalReference.
                   properties:
                     name:
                       description: name is the metadata.name of the referenced resource.
@@ -133,7 +133,7 @@ spec:
                   description: |-
                     LocalReference points at another Agent Plane resource by name, in the same
                     namespace as the referring object. This is the primary composition primitive:
-                    an Agent references a Model, Tools, a Workflow, etc. via LocalReference.
+                    an Agent references a Model, Tools, a Prompt, etc. via LocalReference.
                   properties:
                     name:
                       description: name is the metadata.name of the referenced resource.
@@ -144,16 +144,6 @@ spec:
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
-              defaultWorkflowRef:
-                description: defaultWorkflowRef is applied when an Agent omits a workflowRef.
-                properties:
-                  name:
-                    description: name is the metadata.name of the referenced resource.
-                    minLength: 1
-                    type: string
-                required:
-                - name
-                type: object
               description:
                 description: description documents the class of agents this defines.
                 type: string

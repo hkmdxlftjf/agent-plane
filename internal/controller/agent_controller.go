@@ -84,6 +84,11 @@ type resolution struct {
 	// runtime pod mounts. Collected during resolution so materializing the
 	// Deployment costs no second read.
 	credentials []mountedCredential
+	// gitSecret is the Secret behind spec.workspace.credentialRef — resolved
+	// with the other references so a missing one takes the standard Degraded
+	// path instead of failing the reconcile. Empty when the workspace declares
+	// no credential or the credential has not appeared yet.
+	gitSecret string
 	// peers are the Agents this one consults through peer Tools.
 	peers []peerRef
 }
@@ -127,10 +132,9 @@ type peerRef struct {
 	agent string
 }
 
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agents,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agents,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agents/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=agents/finalizers,verbs=update
-// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=models;workflows;prompttemplates;tools;toolsets;skills;memories;policies;toolpolicies;agentclasses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core.hkmdxlftjf.io,resources=models;prompttemplates;tools;toolsets;skills;policies;toolpolicies;agentclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create
@@ -280,6 +284,9 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 		kind string
 		name string
 		obj  client.Object
+		// git marks the workspace credential, whose Secret name the runtime
+		// materialization needs rather than just its existence.
+		git bool
 	}
 	targets := make([]target, 0, 12)
 
@@ -287,7 +294,7 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 	// The class itself is also a resolved reference (so its changes bump the hash).
 	var class *corev1alpha1.AgentClass
 	if agent.Spec.AgentClassRef != nil {
-		targets = append(targets, target{"AgentClass", agent.Spec.AgentClassRef.Name, &corev1alpha1.AgentClass{}})
+		targets = append(targets, target{kind: "AgentClass", name: agent.Spec.AgentClassRef.Name, obj: &corev1alpha1.AgentClass{}})
 		var c corev1alpha1.AgentClass
 		if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: agent.Spec.AgentClassRef.Name}, &c); err == nil {
 			class = &c
@@ -296,37 +303,26 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 	eff := corev1alpha1.ApplyClassDefaults(agent.Spec, class)
 
 	if eff.ModelRef != nil {
-		targets = append(targets, target{kindModel, eff.ModelRef.Name, &corev1alpha1.Model{}})
+		targets = append(targets, target{kind: kindModel, name: eff.ModelRef.Name, obj: &corev1alpha1.Model{}})
 		res.declared.Model = eff.ModelRef.Name
 	}
-	if eff.WorkflowRef != nil {
-		targets = append(targets, target{"Workflow", eff.WorkflowRef.Name, &corev1alpha1.Workflow{}})
-		res.declared.Workflow = eff.WorkflowRef.Name
-	}
 	if eff.PromptRef != nil {
-		targets = append(targets, target{"PromptTemplate", eff.PromptRef.Name, &corev1alpha1.PromptTemplate{}})
+		targets = append(targets, target{kind: "PromptTemplate", name: eff.PromptRef.Name, obj: &corev1alpha1.PromptTemplate{}})
 	}
 	for _, ref := range eff.ToolRefs {
-		targets = append(targets, target{kindTool, ref.Name, &corev1alpha1.Tool{}})
+		targets = append(targets, target{kind: kindTool, name: ref.Name, obj: &corev1alpha1.Tool{}})
 	}
 	for _, ref := range eff.ToolSetRefs {
-		targets = append(targets, target{"ToolSet", ref.Name, &corev1alpha1.ToolSet{}})
+		targets = append(targets, target{kind: "ToolSet", name: ref.Name, obj: &corev1alpha1.ToolSet{}})
 	}
 	for _, ref := range eff.SkillRefs {
-		targets = append(targets, target{"Skill", ref.Name, &corev1alpha1.Skill{}})
-	}
-	for _, ref := range eff.MemoryRefs {
-		targets = append(targets, target{kindMemory, ref.Name, &corev1alpha1.Memory{}})
-		res.declared.Memories = append(res.declared.Memories, ref.Name)
+		targets = append(targets, target{kind: "Skill", name: ref.Name, obj: &corev1alpha1.Skill{}})
 	}
 	for _, ref := range eff.PolicyRefs {
-		targets = append(targets, target{"Policy", ref.Name, &corev1alpha1.Policy{}})
+		targets = append(targets, target{kind: "Policy", name: ref.Name, obj: &corev1alpha1.Policy{}})
 	}
 	for _, ref := range eff.ToolPolicyRefs {
-		targets = append(targets, target{"ToolPolicy", ref.Name, &corev1alpha1.ToolPolicy{}})
-	}
-	for _, ref := range eff.KnowledgeBaseRefs {
-		targets = append(targets, target{"KnowledgeBase", ref.Name, &corev1alpha1.KnowledgeBase{}})
+		targets = append(targets, target{kind: "ToolPolicy", name: ref.Name, obj: &corev1alpha1.ToolPolicy{}})
 	}
 	// Appended last, and deliberately so. The order of this slice is the order the
 	// config hash is computed over, so putting credentials at the end means an
@@ -338,7 +334,14 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 	// goes Degraded with ReferenceNotFound, instead of failing the reconcile the
 	// way the workspace git credential does.
 	for _, ref := range agent.Spec.CredentialRefs {
-		targets = append(targets, target{kindCredential, ref.Name, &corev1alpha1.Credential{}})
+		targets = append(targets, target{kind: kindCredential, name: ref.Name, obj: &corev1alpha1.Credential{}})
+	}
+	// The workspace git credential gets the same treatment: it is a reference
+	// like any other, so a missing one is reported (Degraded, ReferenceNotFound)
+	// and the watch on idxAgentCredentials wakes the Agent when it appears —
+	// rather than an error requeue whose backoff outlives the outage.
+	if ws := agent.Spec.Workspace; ws != nil && ws.Repository != "" && ws.CredentialRef != nil {
+		targets = append(targets, target{kind: kindCredential, name: ws.CredentialRef.Name, obj: &corev1alpha1.Credential{}, git: true})
 	}
 
 	// An agent with no effective model (neither its own modelRef nor a class
@@ -356,7 +359,16 @@ func (r *AgentReconciler) resolveRefs(ctx context.Context, agent *corev1alpha1.A
 				Name:            t.name,
 				ResourceVersion: t.obj.GetResourceVersion(),
 			})
-			res.collect(t.obj)
+			if t.git {
+				// Only record the Secret name. The git credential mounts at the
+				// clone path, not the generic credentials path, so collecting
+				// it here would (a) mount the Secret a second time and (b)
+				// emit a duplicate volume when the same Credential is also
+				// listed in spec.credentialRefs.
+				res.gitSecret = t.obj.(*corev1alpha1.Credential).Spec.SecretRef.Name
+			} else {
+				res.collect(t.obj)
+			}
 		case apierrors.IsNotFound(getErr):
 			res.missing = append(res.missing, fmt.Sprintf("%s/%s", t.kind, t.name))
 		default:
@@ -459,30 +471,26 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&corev1alpha1.Agent{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		// Model/Workflow/Prompt/Policy can be inherited from an AgentClass, so each
+		// Model/Prompt/Policy can be inherited from an AgentClass, so each
 		// also consults the matching class index.
 		Watches(&corev1alpha1.Model{},
 			r.agentsReferencingIndexed([]string{idxAgentModel}, []string{idxClassModel}, false)).
-		Watches(&corev1alpha1.Workflow{},
-			r.agentsReferencingIndexed([]string{idxAgentWorkflow}, []string{idxClassWorkflow}, false)).
 		Watches(&corev1alpha1.PromptTemplate{},
 			r.agentsReferencingIndexed([]string{idxAgentPrompt}, []string{idxClassPrompt}, false)).
 		Watches(&corev1alpha1.Policy{},
 			r.agentsReferencingIndexed([]string{idxAgentPolicies}, []string{idxClassPolicies}, false)).
-		// A Tool reaches an Agent directly or through a ToolSet.
+		// A Tool reaches an Agent directly, through a ToolSet, or as its
+		// class's default tool.
 		Watches(&corev1alpha1.Tool{},
-			r.agentsReferencingIndexed([]string{idxAgentTools}, nil, true)).
+			r.agentsReferencingIndexed([]string{idxAgentTools}, []string{idxClassTools}, true)).
 		Watches(&corev1alpha1.ToolSet{},
 			r.agentsReferencingIndexed([]string{idxAgentToolSets}, nil, false)).
-		// The rest are only ever referenced directly.
+		// The rest are only ever referenced directly, except where a class can
+		// hand them down.
 		Watches(&corev1alpha1.Skill{},
-			r.agentsReferencingIndexed([]string{idxAgentSkills}, nil, false)).
-		Watches(&corev1alpha1.Memory{},
-			r.agentsReferencingIndexed([]string{idxAgentMemories}, nil, false)).
+			r.agentsReferencingIndexed([]string{idxAgentSkills}, []string{idxClassSkills}, false)).
 		Watches(&corev1alpha1.ToolPolicy{},
-			r.agentsReferencingIndexed([]string{idxAgentToolPolicies}, nil, false)).
-		Watches(&corev1alpha1.KnowledgeBase{},
-			r.agentsReferencingIndexed([]string{idxAgentKnowledge}, nil, false)).
+			r.agentsReferencingIndexed([]string{idxAgentToolPolicies}, []string{idxClassToolPolicies}, false)).
 		// Credentials the Agent mounts itself. Until now the Agent controller
 		// watched none, so a Credential created after the Agent left it Degraded
 		// with nothing to wake it.
@@ -814,21 +822,16 @@ func (r *AgentReconciler) reconcileRuntime(ctx context.Context, agent *corev1alp
 		registryURL = "http://agent-plane-registry.agent-plane-system.svc:9090"
 	}
 
-	// Resolve the git credential to a Secret name before touching the Deployment,
-	// so a missing Credential surfaces as a reconcile error rather than a pod
-	// that crash-loops on an absent volume.
-	//
-	// Gated on the repository too, not just the credentialRef: a credential with
-	// no repository to authenticate against has nothing to do, and validation
-	// rejects that combination anyway. Reading it here would mount a Secret into
-	// a pod that never makes a git request.
+	// The git credential is resolved with the other references (see resolveRefs).
+	// If it has not appeared yet, resolveRefs has recorded it in res.missing and
+	// the Agent goes Degraded below; materializing a pod whose clone step cannot
+	// authenticate would only crash-loop it.
 	gitSecret := ""
 	if ws != nil && ws.Repository != "" && ws.CredentialRef != nil {
-		var cred corev1alpha1.Credential
-		if err := r.Get(ctx, types.NamespacedName{Namespace: agent.Namespace, Name: ws.CredentialRef.Name}, &cred); err != nil {
-			return fmt.Errorf("resolve workspace credential %q: %w", ws.CredentialRef.Name, err)
+		if res.gitSecret == "" {
+			return nil
 		}
-		gitSecret = cred.Spec.SecretRef.Name
+		gitSecret = res.gitSecret
 	}
 
 	// Resolve the model credential the same way, for workspace runtimes that

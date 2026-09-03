@@ -1,0 +1,11 @@
+# Kustomize wrapper so the registry image tag is overridable the same way the
+# manager's is (kustomize edit set image agent-plane-registry=<ref>), instead of
+# a hardcoded tag in registry.yaml.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- registry.yaml
+images:
+- name: agent-plane-registry
+  newName: agent-plane-registry
+  newTag: dev

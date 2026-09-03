@@ -65,12 +65,6 @@ spec:
           - --health-probe-bind-address=:8081
         image: controller:latest
         name: manager
-        env:
-          # Webhooks require TLS certs (cert-manager). Disabled here so the
-          # manager runs without a webhook server; re-enable once cert-manager
-          # and the webhook/cert-manager kustomize components are installed.
-          - name: ENABLE_WEBHOOKS
-            value: "false"
         ports: []
         securityContext:
           readOnlyRootFilesystem: true

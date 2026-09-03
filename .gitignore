@@ -41,9 +41,12 @@ go.work
 # oh-my-claudecode local state
 .omc/
 
+# Node.js dependencies (cmd/script-mcp): installed
+# from package-lock.json, never committed.
+node_modules/
+
 # stray root-level go build outputs
 /registry
 /example-mcp
-/agent-runtime
 /demo
 /manager

@@ -21,7 +21,7 @@ import (
 )
 
 // CredentialSpec indirects secret material through a Kubernetes Secret. Agent Plane
-// never stores secrets inline; Models, Memory, and MCP servers reference a
+// never stores secrets inline; Models and MCP servers reference a
 // Credential, which in turn points at a Secret key.
 type CredentialSpec struct {
 	// secretRef points at the Secret key holding the credential value.

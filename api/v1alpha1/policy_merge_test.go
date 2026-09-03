@@ -40,6 +40,7 @@ const (
 	modelGPT4   = "gpt-4"
 	toolRefund  = "refund"
 	toolLookup  = "lookup"
+	toolDelete  = "delete"
 
 	// Expected fragments of violation messages, shared by the policy and skill
 	// scope tests.
@@ -109,6 +110,53 @@ func TestMergeWildcardAllow(t *testing.T) {
 	}, nil)
 	if !eff.Models.Permits(modelClaude) {
 		t.Error("claude should survive a wildcard allow on the other side")
+	}
+}
+
+// A wildcard allow must be narrowed BY the other side too: unconstrained
+// merged with "only b" is "only b", not "everything".
+func TestMergeWildcardAllowIsNarrowedByExplicitList(t *testing.T) {
+	eff := MergePolicies([]Policy{
+		policyNamed("a", PolicySpec{Models: &AccessRule{Allow: []string{"*"}}}),
+		policyNamed("b", PolicySpec{Models: &AccessRule{Allow: []string{modelGPT4}}}),
+	}, nil)
+	if !eff.Models.Permits(modelGPT4) {
+		t.Error("gpt-4 is allowed by both sides and must stay permitted")
+	}
+	if eff.Models.Permits(modelClaude) {
+		t.Error("a wildcard allow must not widen an explicit allow list on the other side")
+	}
+}
+
+// Two non-empty allow lists with an empty intersection permit nothing — the
+// merged empty list must NOT fall back to "unconstrained" (which would allow
+// everything, the exact opposite of what either Policy says).
+func TestMergeDisjointAllowListsDenyAll(t *testing.T) {
+	eff := MergePolicies([]Policy{
+		policyNamed("a", PolicySpec{Tools: &AccessRule{Allow: []string{toolRefund}}}),
+		policyNamed("b", PolicySpec{Tools: &AccessRule{Allow: []string{toolDelete}}}),
+	}, nil)
+	if eff.Tools.Permits(toolRefund) {
+		t.Error("tool allowed only by policy a must not survive the merge")
+	}
+	if eff.Tools.Permits("delete") {
+		t.Error("tool allowed only by policy b must not survive the merge")
+	}
+	if eff.Tools.Permits("anything-else") {
+		t.Error("disjoint allow lists must collapse to deny-all, not allow-all")
+	}
+}
+
+// The deny-all collapse must be visible as violations so a referencing Agent
+// is Degraded instead of silently running with a meaningless policy.
+func TestMergeDisjointAllowListsReportViolations(t *testing.T) {
+	eff := MergePolicies([]Policy{
+		policyNamed("a", PolicySpec{Tools: &AccessRule{Allow: []string{toolRefund}}}),
+		policyNamed("b", PolicySpec{Tools: &AccessRule{Allow: []string{toolDelete}}}),
+	}, nil)
+	v := eff.Violations(AgentReferences{Tools: []string{toolRefund}})
+	if len(v) == 0 {
+		t.Error("a tool denied by the merged policy must be reported as a violation")
 	}
 }
 
@@ -211,22 +259,10 @@ func TestViolations(t *testing.T) {
 			wantNone: true,
 		},
 		{
-			name:     "denied memory",
-			eff:      MergePolicies([]Policy{policyNamed("p", PolicySpec{Memory: &AccessRule{Allow: []string{"redis"}}})}, nil),
-			refs:     AgentReferences{Memories: []string{"postgres"}},
-			wantSubs: []string{`memory "postgres" is denied`},
-		},
-		{
 			name:     "denied mcp server reached via a tool",
 			eff:      MergePolicies([]Policy{policyNamed("p", PolicySpec{MCP: &AccessRule{Deny: []string{"amap"}}})}, nil),
 			refs:     AgentReferences{MCPServers: []string{"amap"}},
 			wantSubs: []string{`mcpServer "amap" is denied`},
-		},
-		{
-			name:     "denied workflow",
-			eff:      MergePolicies([]Policy{policyNamed("p", PolicySpec{Workflows: &AccessRule{Deny: []string{"planner"}}})}, nil),
-			refs:     AgentReferences{Workflow: "planner"},
-			wantSubs: []string{`workflow "planner" is denied`},
 		},
 		{
 			name: "tool denied by a ToolPolicy rule",
