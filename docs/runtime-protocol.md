@@ -6,10 +6,10 @@ consume them. Any Agent runtime (LangGraph / Agents SDK / CrewAI / custom) that
 implements this spec can plug in — without reading the Kubernetes API or knowing
 Agent Plane internals.
 
-Reference implementation: `cmd/registry/` (server) and the Go SDK
+Reference server: `cmd/registry/`. Client reference: the Go SDK
 [`github.com/hkmdxlftjf/agent-plane-sdk-go`](https://github.com/hkmdxlftjf/agent-plane-sdk-go)
-(client — wire types, `FetchConfig`/`Watch`, secret reads); `cmd/agent-runtime/`
-is a complete runtime built on it.
+(wire types, `FetchConfig`/`Watch`, secret reads). This document is normative
+on its own; there is no in-repo runtime.
 
 ---
 
@@ -266,8 +266,6 @@ on snapshot s:
     atomically swap {current = s, tools, key}
 on disconnect: backoff, reconnect                            # reconnect ⇒ fresh full snapshot
 ```
-
-A working `--watch` implementation of this loop is in `cmd/agent-runtime/`.
 
 ---
 
