@@ -22,8 +22,11 @@ v1 协议（docs/runtime-protocol.md §1.3/§6）规定 payload 只携带 Secret
 
 ## 目标
 
-- 所有 Agent runtime pod：model / memories / knowledgeBases 的 Secret 以
-  `valueFrom: secretKeyRef` 注入 env，变量名由 Registry payload 携带。
+- 所有 Agent runtime pod：model 的 Secret 以 `valueFrom: secretKeyRef`
+  注入 env，变量名由 Registry payload 携带。
+  （2026-09-03 更新：Memory/KnowledgeBase CR 已随 remove-unused-crs
+  设计删除，原方案中 `memories[].env` / `knowledgeBases[].env` 两节
+  随之取消；将来重引入这些 CR 时再扩展。）
 - 协议义务反转：Operator 管辖下的 runtime 不再需要 kube client 和 RBAC。
 - 兼容：AgentConfig 只增字段；旧 runtime 仍可用坐标 + RBAC 读。
 
@@ -48,31 +51,26 @@ v1 协议（docs/runtime-protocol.md §1.3/§6）规定 payload 只携带 Secret
 | 坐标 | 变量名 |
 |---|---|
 | `model` | `AGENTPLANE_MODEL_API_KEY` |
-| `memories[i]` | `AGENTPLANE_MEMORY_<NAME>_KEY` |
-| `knowledgeBases[i]` | `AGENTPLANE_KB_<NAME>_KEY` |
 
-`<NAME>` 为 CR 名经 sanitize（大写、`-`→`_`）。CR 名是 DNS-1123（小写
-字母数字加连字符），到 env 片段的映射是单射，不会碰撞。规则实现为一个
-共享 helper，Registry（写进 payload）与 Operator（注入 env）两侧共用，
-e2e 断言两侧一致；SDK 不需要规则——读 `payload.*.env` 即可。
+单一静态名，无推导。规则实现为一个共享常量，Registry（写进 payload）
+与 Operator（注入 env）两侧共用；SDK 不需要规则——读 `payload.model.env`
+即可。
 
 ### AgentConfig 增字段（additive，符合 v1 前向兼容）
 
-`model.env`、`memories[i].env`、`knowledgeBases[i].env`：string，注入的
-变量名。坐标字段保留（可观测性 + 旧 runtime 的 RBAC 回退）。
+`model.env`：string，注入的变量名。坐标字段保留（可观测性 + 旧 runtime
+的 RBAC 回退）。
 
 ### Operator 注入
 
-- 所有 Agent runtime Deployment 注入上述 env（`valueFrom: secretKeyRef`），
-  与 Registry 同一命名规则。
+- 所有 Agent runtime Deployment 注入 `AGENTPLANE_MODEL_API_KEY`
+  （`valueFrom: secretKeyRef`，来源 = 已有的 `resolveModelSecret` 解析结果）。
 - 解析 best-effort（同 `resolveModelSecret` 现状）：引用的 CR 未就绪 →
   Agent 已 Degraded，不阻塞 Deployment 存在。
 - 注入 env 追加在 `spec.runtime.env` **之后**（Operator 赢，同
   `AGENTPLANE_CREDENTIALS_PATH` 的先例，agent_controller.go:964-969）。
-- 保留名：`ReservedRuntimeEnv`（api/v1alpha1/validation.go:339）增加静态名
-  `AGENTPLANE_MODEL_API_KEY`；动态名按 Agent 自身 `spec.memoryRefs` /
-  `spec.knowledgeBaseRefs` 在 apply 时推导校验（spec 上可得，不需要跨对象
-  存在性）。
+- 保留名：`ReservedRuntimeEnv`（api/v1alpha1/validation.go:339）增加
+  `AGENTPLANE_MODEL_API_KEY`（静态名，无动态推导）。
 - Secret 不存在：pod 无法启动——与现有文件挂载同一失败类别，由 pod status
   显式报错。不设 `optional`。
 
@@ -120,11 +118,11 @@ env 值固定于 pod 生命周期：Secret 轮换需要 rollout。现状 configH
 ## 验证
 
 1. envtest：注入 env 的名字与 secretKeyRef 来源正确；`spec.runtime.env`
-   碰撞静态/动态保留名在 apply 时被拒。
-2. Registry 单测：payload 含 env 字段且命名符合规则。
+   碰撞 `AGENTPLANE_MODEL_API_KEY` 在 apply 时被拒。
+2. Registry 单测：payload.model.env 字段存在且值为该常量。
 3. e2e：payload.env 报告的名字 == pod 实际注入的 env（防 Operator/Registry
-   两侧规则漂移）。
+   两侧漂移）。
 
 ## 测试
 
-- 上述 1–4。轮换语义只文档化，不做自动化测试。
+- 上述 1–3。轮换语义只文档化，不做自动化测试。
