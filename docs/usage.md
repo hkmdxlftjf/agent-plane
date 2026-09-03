@@ -223,21 +223,13 @@ via its own RBAC. Full contract: `docs/runtime-protocol.md`.
 
 ## 7. Running a real agent (Tool/MCP calls)
 
-`cmd/agent-runtime` is a minimal but real runtime (stands in for LangGraph et al.):
-it pulls config from the Registry, reads the model key from the referenced Secret
-via RBAC (the system prompt arrives already resolved in the config), then runs a
-**tool-calling loop** — `http` tools via POST, `mcp` tools via JSON-RPC
-`tools/call` — feeding results back until a final answer. It is built entirely on
-the Go SDK, [`github.com/hkmdxlftjf/agent-plane-sdk-go`](https://github.com/hkmdxlftjf/agent-plane-sdk-go);
-the reusable loop is the SDK's `agentloop` package.
-
-```sh
-make run-registry &
-kubectl -n default port-forward svc/orders-mcp 18080:8080 &   # host → in-cluster MCP
-go run ./cmd/agent-runtime --namespace default --name my-agent \
-  --tool-endpoint order-lookup=http://localhost:18080 \
-  --prompt "What is the status of order A-42?"
-```
+Any runtime that implements `docs/runtime-protocol.md` runs here: it pulls
+config from the Registry, resolves `http` tools via POST and `mcp` tools via
+JSON-RPC `tools/call`, feeds results back until a final answer, and refuses
+calls its Policy/ToolPolicy forbids. The reusable Go loop lives in the SDK
+([`agent-plane-sdk-go`](https://github.com/hkmdxlftjf/agent-plane-sdk-go));
+for a runnable agent today see §14 (coding agent) — the in-repo reference
+runtime was removed in favor of the pi direction.
 
 ---
 
@@ -371,15 +363,6 @@ collide.
 A missing Credential leaves the Agent `Degraded` with `ReferenceNotFound` and
 converges when it appears, like any other reference.
 
-**Reference runtime image.** `cmd/agent-runtime` has a long-running `--watch`
-mode (the container default) that subscribes to the Registry, reads the Secret
-via its ServiceAccount RBAC, and hot-reloads:
-
-```sh
-docker build -f Dockerfile.agent-runtime -t agent-plane-runtime:dev .   # image defaults to --watch
-# then reference it: spec.runtime.image: agent-plane-runtime:dev
-```
-
 > The runtime pod needs RBAC to `get` Secrets in its namespace (for the model
 > key). Grant its ServiceAccount a `Role`/`RoleBinding` accordingly; Agent Plane does
 > not provision that for you.
@@ -393,26 +376,9 @@ docker build -f Dockerfile.agent-runtime -t agent-plane-runtime:dev .   # image 
 
 ## 9. Running the reference runtime
 
-`cmd/agent-runtime` is a minimal real agent that pulls config from the Registry,
-reads the model key from the Secret, exposes Skills as a load-on-demand catalog,
-folds in Memory / KnowledgeBase context, and runs a tool-calling loop. Point it at
-a deployed Agent:
-
-```sh
-export KUBECONFIG=$HOME/.kube/config
-# with an in-cluster Registry, port-forward it (or run `go run ./cmd/registry`):
-kubectl -n agent-plane-system port-forward svc/agent-plane-registry 9090:9090 &
-
-# one-shot:
-go run ./cmd/agent-runtime --registry http://localhost:9090 \
-  --namespace <ns> --name <agent> --prompt "What is the status of order A-42?"
-# interactive REPL:      add --chat
-# browser chat UI + API: add --serve   (or set AGENTPLANE_SERVE=1)
-# long-running hot-reload (the deployed default): add --watch
-```
-
-See **[quickstart-custom-agent.md](quickstart-custom-agent.md)** for the full
-declare → implement → deploy walkthrough.
+The in-repo reference runtime was removed (pi is the only runtime direction;
+see §14 for the coding-agent path that runs today). For the contract a new
+runtime implements, see **[runtime-protocol.md](runtime-protocol.md)**.
 
 ---
 
@@ -422,8 +388,7 @@ declare → implement → deploy walkthrough.
 # ① Code: envtest (real apiserver+etcd) — controller/webhook unit tests + agentmemory
 make test
 
-# ② Real agent: real model + real tool call (see §9)
-go run ./cmd/agent-runtime --namespace <ns> --name <agent> --prompt "..."
+# ② Real agent: see §14 (coding agent) — the reference runtime was removed
 ```
 
 ---
@@ -803,7 +768,6 @@ internal/controller/    # one reconciler per Kind; refutil.go = shared ref-resol
 internal/webhook/       # validating admission webhooks (Agent/Workflow/Tool)
 cmd/main.go             # Operator (manager)
 cmd/registry/           # Registry (data-plane config endpoint: /config, /watch; wire types from the SDK)
-cmd/agent-runtime/      # reference runtime built on the Go SDK (one-shot + --chat + --serve + --watch)
 cmd/example-mcp/        # minimal MCP server (test fixture)
 config/crd|rbac|manager # kustomize bases
 config/default          # full deploy (webhook/cert-manager)
@@ -812,6 +776,6 @@ config/registry         # in-cluster Registry (Deployment+Service+RBAC)
 config/samples          # coherent sample resources
 ```
 
-> `cmd/agent-runtime`, `cmd/example-mcp` are **verification fixtures**, not part
-> of the control plane — they stand in for real Agent frameworks and MCP tool
-> servers to prove the platform drives them end to end.
+> `cmd/example-mcp`, `cmd/script-mcp` are **verification fixtures**, not part
+> of the control plane — they stand in for real MCP tool servers to prove the
+> platform drives them end to end.
