@@ -11,7 +11,8 @@ v1 协议（docs/runtime-protocol.md §1.3/§6）规定 payload 只携带 Secret
   请求失败（§1.3）。
 - 每个 runtime 都要带一个 kube client：Go SDK 有 `secrets.NewReader`；
   node-agent-runtime 手写了 57 行 in-cluster client
-  （cmd/node-agent-runtime/src/secrets.js）只为把坐标换成值；pi 迁移评估
+  （cmd/node-agent-runtime/src/secrets.js，后随 remove-legacy-runtimes
+  设计删除）只为把坐标换成值；pi 迁移评估
   中这是明确成本项——且 kube API 凭据住在跑模型 shell 命令的同一进程里
   （agent_controller.go:552-562 的注释已为此把 model secret 挂成了文件）。
 
@@ -89,14 +90,12 @@ e2e 断言两侧一致；SDK 不需要规则——读 `payload.*.env` 即可。
     `AGENTPLANE_GIT_CREDENTIAL_FILE`/`GIT_CONFIG_*`/`AGENTPLANE_CREDENTIALS_PATH`。
 - §3 payload 示例补 `env` 字段。
 
-### SDK / 参考 runtime / node-agent-runtime
+### SDK / runtime 消费方
 
-读取顺序统一为：payload.env 命名的环境变量 → 回退坐标 + RBAC（日志注明
-走了哪条）。
-
-- cmd/agent-runtime：改读 env，`secrets.NewReader` 留作回退。
-- cmd/node-agent-runtime：secrets.js 降级为回退路径（本地开发仍需）。
-- agent-plane-sdk-go：payload 类型增 `Env` 字段；可加便捷读取 helper。
+（2026-09-03 更新：cmd/agent-runtime 与 cmd/node-agent-runtime 已按
+remove-legacy-runtimes 设计删除。）env-first 的首个实现者是 **pi
+runtime**；SDK 保留 `Env` 字段与"env 优先、坐标 + RBAC 回退"的读取
+helper，供集群外/旧 Registry 场景与第三方 runtime 使用。
 
 ### pi runtime（动机落点）
 
@@ -125,7 +124,6 @@ env 值固定于 pod 生命周期：Secret 轮换需要 rollout。现状 configH
 2. Registry 单测：payload 含 env 字段且命名符合规则。
 3. e2e：payload.env 报告的名字 == pod 实际注入的 env（防 Operator/Registry
    两侧规则漂移）。
-4. 参考 runtime：env 路径取值成功；env 缺席时回退 RBAC 成功。
 
 ## 测试
 
