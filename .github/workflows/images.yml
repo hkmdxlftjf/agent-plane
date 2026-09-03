@@ -3,8 +3,7 @@ name: Images
 # Build and publish the container images to the GitHub Container Registry
 # (ghcr.io). Uses the built-in GITHUB_TOKEN (packages: write) — no PAT needed.
 # Images land at ghcr.io/<owner>/{agent-plane,agent-plane-registry,
-# agent-plane-runtime,agent-plane-example-mcp,agent-plane-coding-agent,
-# agent-plane-lark-mcp}.
+# agent-plane-example-mcp,agent-plane-coding-agent,agent-plane-lark-mcp}.
 #
 # Adding an image is one matrix entry plus its Dockerfile; everything below is
 # shared.
@@ -31,8 +30,6 @@ jobs:
             dockerfile: Dockerfile
           - image: agent-plane-registry
             dockerfile: Dockerfile.registry
-          - image: agent-plane-runtime
-            dockerfile: Dockerfile.agent-runtime
           - image: agent-plane-example-mcp
             dockerfile: Dockerfile.example-mcp
           # opencode plus the Agent Plane plugin: the runtime for Agents with
