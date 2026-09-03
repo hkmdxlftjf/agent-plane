@@ -28,10 +28,6 @@ type PolicySpec struct {
 	// +optional
 	Models *AccessRule `json:"models,omitempty"`
 
-	// memory restricts which Memory backends the agent may use.
-	// +optional
-	Memory *AccessRule `json:"memory,omitempty"`
-
 	// mcp restricts which MCPServers the agent may reach.
 	// +optional
 	MCP *AccessRule `json:"mcp,omitempty"`
@@ -39,10 +35,6 @@ type PolicySpec struct {
 	// tools restricts which Tools/tools the agent may invoke.
 	// +optional
 	Tools *AccessRule `json:"tools,omitempty"`
-
-	// workflows restricts which Workflows the agent may run.
-	// +optional
-	Workflows *AccessRule `json:"workflows,omitempty"`
 }
 
 // AccessRule expresses allow/deny by resource name. An empty allow list means

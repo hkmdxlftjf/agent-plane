@@ -39,11 +39,9 @@ type EffectivePolicy struct {
 	// resolution order, so a denial can point at the object to edit.
 	Sources []string
 
-	Models    *AccessRule
-	Memory    *AccessRule
-	MCP       *AccessRule
-	Tools     *AccessRule
-	Workflows *AccessRule
+	Models *AccessRule
+	MCP    *AccessRule
+	Tools  *AccessRule
 
 	// ToolRules are the concatenated rules of every referenced ToolPolicy, in
 	// order. The first rule matching a tool name applies, except that an exact
@@ -66,10 +64,8 @@ func MergePolicies(policies []Policy, toolPolicies []ToolPolicy) *EffectivePolic
 		p := &policies[i]
 		eff.Sources = append(eff.Sources, "Policy/"+p.Name)
 		eff.Models = mergeAccessRule(eff.Models, p.Spec.Models)
-		eff.Memory = mergeAccessRule(eff.Memory, p.Spec.Memory)
 		eff.MCP = mergeAccessRule(eff.MCP, p.Spec.MCP)
 		eff.Tools = mergeAccessRule(eff.Tools, p.Spec.Tools)
-		eff.Workflows = mergeAccessRule(eff.Workflows, p.Spec.Workflows)
 	}
 	for i := range toolPolicies {
 		tp := &toolPolicies[i]
@@ -165,8 +161,6 @@ func union(a, b []string) []string {
 // tool reached indirectly is policed the same as a directly referenced one).
 type AgentReferences struct {
 	Model      string
-	Workflow   string
-	Memories   []string
 	Tools      []string
 	MCPServers []string
 }
@@ -194,16 +188,6 @@ func (e *EffectivePolicy) Violations(refs AgentReferences) []string {
 	if e.Models != nil && refs.Model != "" {
 		if !e.Models.Permits(refs.Model) {
 			out = append(out, fmt.Sprintf("model %q is denied by policy", refs.Model))
-		}
-	}
-	if e.Workflows != nil && refs.Workflow != "" {
-		if !e.Workflows.Permits(refs.Workflow) {
-			out = append(out, fmt.Sprintf("workflow %q is denied by policy", refs.Workflow))
-		}
-	}
-	for _, name := range refs.Memories {
-		if e.Memory != nil && !e.Memory.Permits(name) {
-			out = append(out, fmt.Sprintf("memory %q is denied by policy", name))
 		}
 	}
 	for _, name := range refs.MCPServers {

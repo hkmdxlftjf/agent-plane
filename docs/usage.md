@@ -71,7 +71,7 @@ and wire the watch to it — a watch with no matching index silently stops
 re-reconciling, which looks like a resource that just never converges.
 
 Two routes reach a resource without it naming the dependency directly, and both
-are handled: an Agent inheriting `modelRef`/`workflowRef`/`promptRef`/`policyRefs`
+are handled: an Agent inheriting `modelRef`/`promptRef`/`policyRefs`
 from its AgentClass, and a Tool reaching an Agent through a ToolSet. Add a third
 such route and the mapper needs to know about it.
 
@@ -94,7 +94,7 @@ API group `core.hkmdxlftjf.io/v1alpha1`, all Namespaced.
 | **PromptTemplate** | pt | Versioned system/role prompts + few-shot. |
 | **Memory** | — | Memory/storage backend (redis/postgres/vector/graph/s3). |
 | **KnowledgeBase** | kb | Retrieval corpus (RAG). |
-| **Policy** | — | Coarse allow/deny over models/memory/mcp/tools/workflows; enforced (see §12). |
+| **Policy** | — | Coarse allow/deny over models/mcp/tools; enforced (see §12). |
 | **ToolPolicy** | tp | Per-Tool allow/deny and per-session call caps; enforced (see §12). |
 | **Credential** | cred | Indirects secret material through a K8s Secret (never inline). |
 | **Trigger** | trg | An inbound event source (IM bot, webhook) feeding an Agent; runs a BYO adapter image (see §13). |
@@ -155,7 +155,7 @@ kind: Agent
 metadata: {name: my-agent}
 spec:
   modelRef: {name: my-model}
-  # optional: promptRef / toolRefs / toolSetRefs / skillRefs / memoryRefs / policyRefs / agentClassRef / runtime
+  # optional: promptRef / toolRefs / toolSetRefs / skillRefs / policyRefs / agentClassRef / runtime
 ```
 
 ```sh
@@ -385,7 +385,7 @@ runtime implements, see **[runtime-protocol.md](runtime-protocol.md)**.
 ## 10. Verification & testing
 
 ```sh
-# ① Code: envtest (real apiserver+etcd) — controller/webhook unit tests + agentmemory
+# ① Code: envtest (real apiserver+etcd) — controller/webhook unit tests
 make test
 
 # ② Real agent: see §14 (coding agent) — the reference runtime was removed
@@ -429,7 +429,7 @@ can do the whole job alone.
 a Policy it references, `AgentReconciler` marks it `Degraded` with reason
 `PolicyViolation` and clears `resolvedConfigHash` — so no runtime ever fetches a
 config for it. Everything the Agent *declares* is checked: `modelRef`,
-`workflowRef`, `memoryRefs`, `toolRefs`, the tools contributed by every
+`toolRefs`, the tools contributed by every
 `toolSetRefs` member, and the MCPServer behind each tool (so a ToolSet is not a
 way to smuggle a denied tool past policy). The result is reported on its own
 condition, separate from `Resolved`:

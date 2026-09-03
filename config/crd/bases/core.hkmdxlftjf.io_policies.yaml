@@ -57,21 +57,6 @@ spec:
                     type: array
                     x-kubernetes-list-type: set
                 type: object
-              memory:
-                description: memory restricts which Memory backends the agent may
-                  use.
-                properties:
-                  allow:
-                    items:
-                      type: string
-                    type: array
-                    x-kubernetes-list-type: set
-                  deny:
-                    items:
-                      type: string
-                    type: array
-                    x-kubernetes-list-type: set
-                type: object
               models:
                 description: models restricts which Models the agent may use.
                 properties:
@@ -88,20 +73,6 @@ spec:
                 type: object
               tools:
                 description: tools restricts which Tools/tools the agent may invoke.
-                properties:
-                  allow:
-                    items:
-                      type: string
-                    type: array
-                    x-kubernetes-list-type: set
-                  deny:
-                    items:
-                      type: string
-                    type: array
-                    x-kubernetes-list-type: set
-                type: object
-              workflows:
-                description: workflows restricts which Workflows the agent may run.
                 properties:
                   allow:
                     items:

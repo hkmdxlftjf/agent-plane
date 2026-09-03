@@ -259,22 +259,10 @@ func TestViolations(t *testing.T) {
 			wantNone: true,
 		},
 		{
-			name:     "denied memory",
-			eff:      MergePolicies([]Policy{policyNamed("p", PolicySpec{Memory: &AccessRule{Allow: []string{"redis"}}})}, nil),
-			refs:     AgentReferences{Memories: []string{"postgres"}},
-			wantSubs: []string{`memory "postgres" is denied`},
-		},
-		{
 			name:     "denied mcp server reached via a tool",
 			eff:      MergePolicies([]Policy{policyNamed("p", PolicySpec{MCP: &AccessRule{Deny: []string{"amap"}}})}, nil),
 			refs:     AgentReferences{MCPServers: []string{"amap"}},
 			wantSubs: []string{`mcpServer "amap" is denied`},
-		},
-		{
-			name:     "denied workflow",
-			eff:      MergePolicies([]Policy{policyNamed("p", PolicySpec{Workflows: &AccessRule{Deny: []string{"planner"}}})}, nil),
-			refs:     AgentReferences{Workflow: "planner"},
-			wantSubs: []string{`workflow "planner" is denied`},
 		},
 		{
 			name: "tool denied by a ToolPolicy rule",

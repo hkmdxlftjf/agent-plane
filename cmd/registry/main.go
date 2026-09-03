@@ -397,10 +397,8 @@ func (s *server) resolvePolicy(ctx context.Context, ns string, eff corev1alpha1.
 	pv := &sdk.Policy{
 		Sources:           merged.Sources,
 		Models:            accessRuleView(merged.Models),
-		Memory:            accessRuleView(merged.Memory),
 		MCP:               accessRuleView(merged.MCP),
 		Tools:             accessRuleView(merged.Tools),
-		Workflows:         accessRuleView(merged.Workflows),
 		DefaultToolAction: string(merged.DefaultToolAction),
 	}
 	for _, r := range merged.ToolRules {
