@@ -77,18 +77,6 @@ on its own; there is no in-repo runtime.
     "system": "You are a support agent…"   // ready to use; no CR read needed
   },
 
-  "workflow": {                      // resolved from the Agent's Workflow (workflowRef)
-    "name":    "react-loop",
-    "engine":  "langgraph",          // free-form target engine hint
-    "version": "1.0.0",
-    "steps": [                       // engine-neutral step graph; Agent Plane never executes it
-      { "name": "plan",    "type": "planner", "next": ["act"] },
-      { "name": "act",     "type": "tool",    "next": ["reflect"] },
-      { "name": "reflect", "type": "reflect", "next": ["act", "finish"] },
-      { "name": "finish",  "type": "finish" }
-    ]
-  },
-
   "model": {                         // present when the Agent is Ready
     "provider":  "custom",
     "modelName": "claude-haiku-4-5-20251001",
@@ -117,27 +105,6 @@ on its own; there is no in-repo runtime.
     }
   ],
 
-  "memories": [                      // persistence backends the Agent may use
-    {
-      "name":       "session-memory",
-      "backend":    "redis",         // redis | postgres | vector | graph | s3
-      "namespace":  "support-sessions",  // key prefix / collection scope
-      "secretName": "redis-secret",  // ← coordinates only; DSN value NOT in payload
-      "secretKey":  "dsn"            //    the runtime reads the Secret itself
-    }
-  ],
-
-  "knowledgeBases": [                // corpora the Agent may retrieve from (RAG)
-    {
-      "name":           "support-docs",
-      "source":         "http",      // http | s3 | git | vector
-      "uri":            "http://retriever.default.svc/search",
-      "embeddingModel": "text-embedding-3-small",  // resolved from embeddingModelRef
-      "secretName":     "kb-secret", // ← coordinates only, as above
-      "secretKey":      "token"
-    }
-  ],
-
   "policy": {                        // merged from policyRefs + toolPolicyRefs
     "sources": ["Policy/guardrails", "ToolPolicy/tool-limits"],   // what it came from
     "models":    { "allow": ["llm-model"] },      // allow/deny by CR name;
@@ -153,17 +120,12 @@ on its own; there is no in-repo runtime.
 
 Conventions:
 - `spec` is the **effective** spec: the Agent's own spec with any unset optional
-  references (`modelRef`, `workflowRef`, `promptRef`, `policyRefs`) filled in from
-  its `agentClassRef` AgentClass defaults. Operator and Registry apply the same
+  references (`modelRef`, `promptRef`, `policyRefs`) filled in
+  from its `agentClassRef` AgentClass defaults. Operator and Registry apply the same
   merge (`AgentSpec.ApplyClassDefaults`) so what you see is what was hashed.
 - `prompt` is the resolved system prompt of the Agent's `promptRef`
   PromptTemplate; absent when no PromptTemplate is referenced. Runtimes need no
   access to PromptTemplate CRs.
-- `workflow` is the resolved step graph of the Agent's `workflowRef` Workflow;
-  absent when none is referenced. It is a **declaration only** — the control
-  plane never executes it. What `planner`/`tool`/`reflect`/`finish` (or any
-  other step type) *means* is up to the runtime/engine; a runnable interpreter
-  lives in the SDK's `examples/workflow-runner`.
 - When not Ready, `model` may be absent and `configHash` is `""`.
 - `tools[]` is the union of the Agent's `toolRefs` and the tools of every
   `toolSetRefs` member, deduplicated by name.
@@ -186,14 +148,6 @@ Conventions:
   past a Policy. The control plane rejects an Agent whose Skill allows a tool the
   Agent does not reference, so a config you receive is already coherent. The SDK's
   `policy.Session.NoteSkillLoaded` implements this.
-- `memories[]` carries only backend + Secret coordinates. As with `model`, the
-  Registry never serves the connection value — the runtime reads the Secret and
-  connects itself. Only `redis` is implemented in the reference runtime today;
-  other backends are declared but return "unsupported".
-- `knowledgeBases[]` carries the corpus location + resolved embedding model +
-  Secret coordinates. The reference runtime retrieves from `http`-source KBs
-  (POST `{"query":…}` → context text prepended to the turn); other sources are
-  declared but retrieval is left to a real runtime.
 - `policy` is the merge of every `policyRefs` Policy and `toolPolicyRefs`
   ToolPolicy; absent when the Agent references neither. Merging only ever
   *narrows*: allow lists intersect, deny lists union, and an explicit
@@ -289,6 +243,9 @@ on disconnect: backoff, reconnect                            # reconnect ⇒ fre
 - Planned (not part of the v1 contract): `ETag`/`If-None-Match` for polling
   short-circuit; SSE `id:` + `Last-Event-ID` resume cursor; gRPC/server-streaming
   transport; event-level `kind` (`snapshot`/`deleted`).
+- **v1.1 (2026-09-03):** removed `workflow`, `memories`, `knowledgeBases` from
+  the payload along with their CRs; clients must treat absent sections as
+  "not applicable". Breaking, published while no runtime existed.
 
 ---
 

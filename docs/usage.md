@@ -2,7 +2,7 @@
 
 Agent Plane is a **Kubernetes-native control plane for AI Agents**. It uses the
 Operator pattern to declaratively manage Agents and everything they are composed
-from (Model / Tool / Skill / MCPServer / Workflow / Prompt / Memory / Policy …),
+from (Model / Tool / Skill / MCPServer / Prompt / Policy …),
 and serves the resolved configuration to runtimes through the **Registry**.
 
 > **Positioning.** Agent Plane is **not** an Agent runtime. It does not do inference,
@@ -16,7 +16,7 @@ and serves the resolved configuration to runtimes through the **Registry**.
 ## Table of contents
 
 1. [Architecture](#1-architecture)
-2. [Resource model (15 CRDs)](#2-resource-model-15-crds)
+2. [Resource model (12 CRDs)](#2-resource-model-12-crds)
 3. [Prerequisites & deploy](#3-prerequisites--deploy)
 4. [Declarative usage: define an Agent in YAML](#4-declarative-usage-define-an-agent-in-yaml)
 5. [Programmatic usage: create an Agent in Go](#5-programmatic-usage-create-an-agent-in-go)
@@ -77,7 +77,7 @@ such route and the mapper needs to know about it.
 
 ---
 
-## 2. Resource model (15 CRDs)
+## 2. Resource model (12 CRDs)
 
 API group `core.hkmdxlftjf.io/v1alpha1`, all Namespaced.
 
@@ -90,10 +90,7 @@ API group `core.hkmdxlftjf.io/v1alpha1`, all Namespaced.
 | **ToolSet** | ss | A named bundle of Tools. |
 | **Skill** | — | A markdown instruction pack (SKILL.md-style); teaches the agent *how*; its `allowedTools` confine tool calls once loaded (see §12). |
 | **MCPServer** | mcp | An MCP server; Operator materializes it into a Deployment+Service. |
-| **Workflow** | wf | Engine-neutral execution shape (planner/tool/reflect/finish). |
 | **PromptTemplate** | pt | Versioned system/role prompts + few-shot. |
-| **Memory** | — | Memory/storage backend (redis/postgres/vector/graph/s3). |
-| **KnowledgeBase** | kb | Retrieval corpus (RAG). |
 | **Policy** | — | Coarse allow/deny over models/mcp/tools; enforced (see §12). |
 | **ToolPolicy** | tp | Per-Tool allow/deny and per-session call caps; enforced (see §12). |
 | **Credential** | cred | Indirects secret material through a K8s Secret (never inline). |
@@ -765,7 +762,7 @@ the value is read by the runtime via its own RBAC.
 ```
 api/v1alpha1/           # 14 CRD types + shared types + structural validation (validation.go)
 internal/controller/    # one reconciler per Kind; refutil.go = shared ref-resolution/watch helpers
-internal/webhook/       # validating admission webhooks (Agent/Workflow/Tool)
+internal/webhook/       # validating admission webhooks (Agent/Tool)
 cmd/main.go             # Operator (manager)
 cmd/registry/           # Registry (data-plane config endpoint: /config, /watch; wire types from the SDK)
 cmd/example-mcp/        # minimal MCP server (test fixture)

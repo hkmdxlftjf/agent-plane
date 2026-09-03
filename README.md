@@ -3,7 +3,7 @@
 Agent Plane is a **control plane** for AI Agents, built with the Kubernetes Operator
 pattern. It manages the _declaration, lifecycle, and configuration_ of Agents
 and the resources they are composed from — Models, Tools, Skills, MCP servers,
-Workflows, Prompts, Memory, Policies, and more — as first-class Custom
+Prompts, Policies, and more — as first-class Custom
 Resources.
 
 > Agent Plane is **not** an Agent runtime. It does not do inference, planning, ReAct,
@@ -28,9 +28,9 @@ Resources.
     watches only Agents; the Operator folds dependency changes into the Agent's
     `resolvedConfigHash`, so an Agent event covers any change that matters.
 - **Admission webhooks** (`internal/webhook/v1alpha1/`) validate _structural_
-  invariants at apply time (fail fast) for Agent (no duplicate refs), Workflow
-  (unique step names, no dangling `next`), and Tool (an `mcp` tool needs an
-  `mcpServerRef`). The same checks live in `api/v1alpha1/validation.go` and are
+  invariants at apply time (fail fast) for Agent (no duplicate refs) and Tool
+  (an `mcp` tool needs an `mcpServerRef`). The same checks live in
+  `api/v1alpha1/validation.go` and are
   reused by the controllers — cross-object _existence_ is deliberately left to
   the controllers' eventual consistency so GitOps can apply in any order.
 
@@ -45,11 +45,8 @@ Resources.
 | **ToolSet**        | A named bundle of Tools.                                                                                                                                  |
 | **Skill**          | A markdown instruction pack (SKILL.md-style) that teaches the agent _how_ to do something; its `allowedTools` confine the agent once the skill is loaded. |
 | **MCPServer**      | An MCP server; the Operator materializes it into a Deployment + Service.                                                                                  |
-| **Workflow**       | Engine-neutral execution shape (planner/tool/reflect/finish).                                                                                             |
 | **PromptTemplate** | Versioned system/role prompts and few-shot examples.                                                                                                      |
-| **Memory**         | A memory/storage backend (redis/postgres/vector/graph/s3).                                                                                                |
-| **KnowledgeBase**  | A retrieval corpus (RAG).                                                                                                                                 |
-| **Policy**         | Coarse allow/deny over models/memory/mcp/tools/workflows. Enforced: the Operator refuses to run an Agent whose refs are denied.                           |
+| **Policy**         | Coarse allow/deny over models/mcp/tools. Enforced: the Operator refuses to run an Agent whose refs are denied.                                             |
 | **ToolPolicy**     | Per-Tool authorization and per-session call caps. Enforced by the runtime at call time.                                                                   |
 | **Credential**     | Indirects secret material through a Kubernetes Secret.                                                                                                    |
 | **Trigger**        | An _inbound_ event source (IM bot, webhook) feeding an Agent, run as an owned adapter Deployment.                                                         |
@@ -77,9 +74,9 @@ itself to peers (`spec.expose`) — see _Coding agents_ below.
   `Deployment` + `Service` for each MCPServer via `CreateOrUpdate` +
   `SetControllerReference`, and reflects availability into status.
 
-The remaining 12 controllers follow the same two shapes: **reference-resolving**
-(Model, Memory, Tool, ToolSet, Skill, KnowledgeBase, AgentClass, Credential) validate
-and resolve what they point at, and **validation-only** (Workflow, ToolPolicy,
+The remaining 9 controllers follow the same two shapes: **reference-resolving**
+(Model, Tool, ToolSet, Skill, AgentClass, Credential) validate
+and resolve what they point at, and **validation-only** (ToolPolicy,
 Policy, PromptTemplate) check internal consistency. Each watches the kinds it
 depends on, so the reference graph converges automatically — a resource stuck
 `Degraded` on a missing dependency flips to `Ready` as soon as that dependency
