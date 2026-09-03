@@ -48,6 +48,5 @@ node_modules/
 # stray root-level go build outputs
 /registry
 /example-mcp
-/agent-runtime
 /demo
 /manager

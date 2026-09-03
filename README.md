@@ -222,8 +222,6 @@ in. See **[docs/adapter-protocol.md](docs/adapter-protocol.md)** and
 
 ## Documentation
 
-- **[docs/quickstart-custom-agent.md](docs/quickstart-custom-agent.md)** — zero-to-running
-  guide: declare a custom agent, implement its runtime code, and deploy it.
 - **[docs/usage.md](docs/usage.md)** — full usage guide (deploy, declarative &
   programmatic usage, data plane, runtime, FAQ).
 - **[docs/runtime-protocol.md](docs/runtime-protocol.md)** — the runtime

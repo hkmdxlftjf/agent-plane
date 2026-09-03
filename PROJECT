@@ -68,18 +68,6 @@ resources:
   controller: true
   domain: hkmdxlftjf.io
   group: core
-  kind: Workflow
-  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
-  version: v1alpha1
-  webhooks:
-    validation: true
-    webhookVersion: v1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: hkmdxlftjf.io
-  group: core
   kind: Model
   path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
   version: v1alpha1
@@ -90,24 +78,6 @@ resources:
   domain: hkmdxlftjf.io
   group: core
   kind: PromptTemplate
-  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
-  version: v1alpha1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: hkmdxlftjf.io
-  group: core
-  kind: Memory
-  path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
-  version: v1alpha1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: hkmdxlftjf.io
-  group: core
-  kind: KnowledgeBase
   path: github.com/hkmdxlftjf/agent-plane/api/v1alpha1
   version: v1alpha1
 - api:

@@ -142,41 +142,35 @@ cmd_verify() {
 }
 
 cmd_test_webhook() {
-  echo ">>> applying a valid Workflow (expect: accepted)"
+  echo ">>> applying a valid Tool (expect: accepted)"
   kubectl apply -f - <<'EOF'
 apiVersion: core.hkmdxlftjf.io/v1alpha1
-kind: Workflow
+kind: Tool
 metadata:
   name: kind-local-smoke
 spec:
-  engine: agentloop
-  version: "1.0.0"
-  steps:
-    - name: done
-      type: finish
+  type: http
+  description: Webhook smoke test: a structurally valid http tool.
+  endpoint: http://example.invalid/call
 EOF
-  echo ">>> applying an invalid Workflow, duplicate step names (expect: denied)"
+  echo ">>> applying an invalid Tool, mcp without mcpServerRef (expect: denied)"
   if kubectl apply -f - <<'EOF'
 apiVersion: core.hkmdxlftjf.io/v1alpha1
-kind: Workflow
+kind: Tool
 metadata:
   name: kind-local-smoke-bad
 spec:
-  engine: agentloop
-  version: "1.0.0"
-  steps:
-    - name: dup
-      type: planner
-    - name: dup
-      type: finish
+  type: mcp
+  description: Webhook smoke test: an mcp tool with no mcpServerRef.
+  mcpToolName: nothing
 EOF
   then
-    echo "!!! invalid Workflow was accepted — webhook not enforcing" >&2
-    kubectl delete workflow kind-local-smoke kind-local-smoke-bad --ignore-not-found
+    echo "!!! invalid Tool was accepted — webhook not enforcing" >&2
+    kubectl delete tool kind-local-smoke kind-local-smoke-bad --ignore-not-found
     exit 1
   fi
   echo ">>> denied as expected"
-  kubectl delete workflow kind-local-smoke --ignore-not-found
+  kubectl delete tool kind-local-smoke --ignore-not-found
 }
 
 cmd_deploy() {
