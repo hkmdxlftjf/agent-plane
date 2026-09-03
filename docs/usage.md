@@ -760,7 +760,7 @@ the value is read by the runtime via its own RBAC.
 ## 16. Repo layout
 
 ```
-api/v1alpha1/           # 14 CRD types + shared types + structural validation (validation.go)
+api/v1alpha1/           # 12 CRD types + shared types + structural validation (validation.go)
 internal/controller/    # one reconciler per Kind; refutil.go = shared ref-resolution/watch helpers
 internal/webhook/       # validating admission webhooks (Agent/Tool)
 cmd/main.go             # Operator (manager)
