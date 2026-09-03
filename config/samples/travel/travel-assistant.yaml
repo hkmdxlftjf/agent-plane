@@ -41,17 +41,14 @@
 #
 # ---------------------------------------------------------------------------
 # The runtime image is yours to supply. This file declares *what the assistant
-# is*; it does not ship a process that runs it. Two ways to fill that in:
+# is*; it does not ship a process that runs it. One way to fill that in:
 #
-#   - ghcr.io/hkmdxlftjf/agent-plane-runtime, the reference runtime, in serve
-#     mode (AGENTPLANE_SERVE=1). It answers POST /api/chat, so pair it with a
-#     Trigger (§13) for an IM front end.
 #   - Dockerfile.coding-agent's image, which is opencode plus the Agent Plane
 #     plugin. Despite the name nothing in it requires a repository — it holds
 #     the Feishu connection in-process, which is why this sample declares no
 #     Trigger and passes the Lark credential to the Agent itself.
 #
-# This file assumes the second. Set runtime.image accordingly.
+# This file assumes that image. Set runtime.image accordingly.
 apiVersion: core.hkmdxlftjf.io/v1alpha1
 kind: Credential
 metadata:

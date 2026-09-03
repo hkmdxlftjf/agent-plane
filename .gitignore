@@ -41,7 +41,7 @@ go.work
 # oh-my-claudecode local state
 .omc/
 
-# Node.js dependencies (cmd/node-agent-runtime, cmd/script-mcp): installed
+# Node.js dependencies (cmd/script-mcp): installed
 # from package-lock.json, never committed.
 node_modules/
 

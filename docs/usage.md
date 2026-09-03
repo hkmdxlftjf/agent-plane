@@ -281,7 +281,7 @@ The Operator injects into each runtime pod:
 | `AGENTPLANE_CREDENTIALS_PATH` | when `spec.credentialRefs` is set — see _Credentials_ below |
 
 The runtime container then pulls its config from the Registry and hot-reloads on
-change (pull model — see the reference `--watch` mode below). The Deployment is
+change (pull model — see docs/runtime-protocol.md §6). The Deployment is
 owned by the Agent, so deleting the Agent garbage-collects the runtime.
 `status.runtimeAvailableReplicas` reflects availability.
 
@@ -374,7 +374,7 @@ converges when it appears, like any other reference.
 
 ---
 
-## 9. Running the reference runtime
+## 9. Running an agent runtime
 
 The in-repo reference runtime was removed (pi is the only runtime direction;
 see §14 for the coding-agent path that runs today). For the contract a new
